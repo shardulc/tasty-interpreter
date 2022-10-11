@@ -20,7 +20,7 @@ lazy val root = (project in file("."))
     scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
 
     // this is locally published from LAMP/scala-js/tasty-query
-    libraryDependencies += "tasty-query" %%% "tasty-query" % "0.1-SNAPSHOT",
+    libraryDependencies += "tasty-query" %%% "tasty-query" % "0.1-SNAPSHOT" % Compile,
     libraryDependencies += "org.scalameta" %%% "munit" % "0.7.29" % Test,
   ))
 
