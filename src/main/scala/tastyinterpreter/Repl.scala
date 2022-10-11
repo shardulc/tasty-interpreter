@@ -19,42 +19,15 @@ import tastyquery.Spans
 
 object Repl:
   val classpaths = List(
-    "/home/shardulc/Documents/school/EPFL/LAMP/scala-js/trial/target/scala-3.1.3/classes/",
+    "/home/shardulc/Documents/school/EPFL/LAMP/tasty-interpreter/src/test/resources/testinputs/target/scala-3.1.3/classes/",
   )
 
   def main(args: Array[String]): Unit =
-    println("hello world")
-    val path = List(
-      termName("tutorial"),
-    )
+    println("repl not implemented yet!")
     initializeContext()
-      .map(evaluatePackage(path)(using _))
-      .recover{ case NonFatal(e) => System.err.println(e) }
 
   def initializeContext(): Future[Context] =
     ClasspathLoaders.read(classpaths).map(Contexts.init(_))
-
-  def printAllDefs(path: List[Name])(using ctx: Context): Unit =
-    ctx.findSymbolFromRoot(path).tree.map(_.asInstanceOf[Tree].walkTree {
-      case dt: DefTree =>
-        println(dt.symbol)
-      case t =>
-        println(t)
-    })
-
-  def evaluatePackage(path: List[Name])(using ctx: Context): Unit =
-    val topLevelDecls = ctx.findPackageFromRoot(FullyQualifiedName(path)).asPackage.declarations
-    val topLevelEnv = ScalaEnvironment(None, HashMap.empty)
-    for
-      decl <- topLevelDecls
-    yield
-      println(evaluate(topLevelEnv)(decl.tree.get.asInstanceOf[Tree])
-        .recover(e => e.getMessage()))
-
-    val t = TermRefTree(termName("TutorialApp"), NoType)(Spans.NoSpan)
-    println(evaluate(topLevelEnv)(Apply(Select(t, termName("doit"))(Spans.NoSpan), List.empty)(Spans.NoSpan))
-      .recover(_.getMessage()))
-
 
 /*
 match {
