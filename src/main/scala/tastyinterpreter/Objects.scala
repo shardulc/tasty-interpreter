@@ -78,7 +78,7 @@ case class ScalaClass(
 
 class ScalaObject(val environment: ScalaEnvironment) extends ScalaValue
 
-case class ScalaFunctionObject(environment: ScalaEnvironment, method: ScalaMethod)
+case class ScalaFunctionObject(override val environment: ScalaEnvironment, method: ScalaMethod)
     extends ScalaObject(environment):
   environment(termName("apply")) = BuiltInMethod { (env, arguments, ctx) =>
     method.apply(env, arguments)(using ctx)
