@@ -24,9 +24,15 @@ setup-job:
   stage: setup
   script:
     - npm install
+  cache:
+    key: ${CI_BUILD_REF_NAME}
+    paths:
+      - node_modules/
+  artifacts:
+    paths:
+      - node_modules/
 
 unit-test-job:   # This job runs in the test stage.
   stage: sbt-test
   script:
-    - echo "Running sbt test"
     - sbt test
