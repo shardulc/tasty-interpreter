@@ -93,8 +93,8 @@ def evaluateApply(env: ScalaEnvironment)(tree: Apply)(using Context): Try[ScalaV
     case _ => Failure(TastyEvaluationError(s"can't apply ${fun}")))
 
 def evaluateLambda(env: ScalaEnvironment)(tree: Lambda)(using Context): Try[ScalaFunctionObject] =
-  evaluate(env)(tree.meth)
-    .map(meth => ScalaFunctionObject(meth.asInstanceOf[ScalaMethod]))
+  evaluate(env)(tree.meth).map(meth =>
+    ScalaFunctionObject(ScalaEnvironment(Some(env)), meth.asInstanceOf[ScalaMethod]))
 
 def evaluateName(env: ScalaEnvironment)(tree: TermName)(using Context): Try[ScalaTerm] =
   tree match
