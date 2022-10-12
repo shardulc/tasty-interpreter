@@ -15,26 +15,26 @@ import tastyquery.Trees.*
 interpreted entity hierarchy
 ----------------------------
 
-ScalaEntity
--- ScalaTerm
-   -- ScalaValue
+sealed ScalaEntity
+-- sealed ScalaTerm
+   -- sealed ScalaValue
       -- ScalaObject
          -- ScalaFunctionObject
-         -- ScalaInt
+         -- ScalaInt (with ScalaValueExtractor)
          -- ScalaUnit
-   -- ScalaApplicable
+   -- sealed ScalaApplicable
       -- ScalaMethod
       -- BuiltInMethod
--- ScalaType
+-- sealed ScalaType
    -- ScalaClass
 
 */
 
 
-trait ScalaEntity
+sealed trait ScalaEntity
 sealed trait ScalaTerm extends ScalaEntity
-trait ScalaValue extends ScalaTerm
-trait ScalaType extends ScalaEntity
+sealed trait ScalaValue extends ScalaTerm
+sealed trait ScalaType extends ScalaEntity
 
 class ScalaEnvironment(
     parent: Option[ScalaEnvironment],
@@ -78,27 +78,35 @@ case class ScalaClass(
 
 class ScalaObject(val environment: ScalaEnvironment) extends ScalaValue
 
-case class ScalaFunctionObject(override val environment: ScalaEnvironment, method: ScalaMethod)
+class ScalaFunctionObject(override val environment: ScalaEnvironment, method: ScalaMethod)
     extends ScalaObject(environment):
   environment(termName("apply")) = BuiltInMethod { (env, arguments, ctx) =>
     method.apply(env, arguments)(using ctx)
   }
 
-case class ScalaInt(value: Int) extends ScalaObject(ScalaEnvironment(None)):
+trait ScalaValueExtractor[T](val value: T)
+
+/*
+ * This is a mockup of the built-in Int type. Eventually, we want to pass
+ * the Scala library through the interpreter and use its definitions (in our
+ * target language) rather than the metalanguage definitions here.
+ */
+class ScalaInt(override val value: Int) extends ScalaObject(ScalaEnvironment(None))
+    with ScalaValueExtractor(value):
   environment(termName("+")) = BuiltInMethod { (env, arguments, ctx) =>
     mapUnderTry(arguments, evaluate(env)(_)(using ctx)).flatMap(_ match
       case (a: ScalaInt) :: Nil => Success(ScalaInt(a.value + this.value))
       case _ => Failure(TastyEvaluationError("wrong args for Int +")))
   }
 
-case object ScalaUnit extends ScalaObject(ScalaEnvironment(None))
+object ScalaUnit extends ScalaObject(ScalaEnvironment(None))
 type ScalaUnit = ScalaUnit.type
 
-trait ScalaApplicable extends ScalaTerm:
+sealed trait ScalaApplicable extends ScalaTerm:
   def apply(callingEnvironment: ScalaEnvironment, arguments: List[Tree])
     (using Context): Try[ScalaValue] 
 
-case class ScalaMethod(
+class ScalaMethod(
     parent: ScalaEnvironment,
     parameters: List[TermName],
     // returnType: ScalaType,

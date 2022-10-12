@@ -33,7 +33,7 @@ def evaluate(env: ScalaEnvironment)(tree: Tree)(using Context): Try[ScalaTerm] =
     case Select(qualifier, t) =>
       evaluate(env)(qualifier).flatMap(_ match
         case (q: ScalaObject) => evaluateName(q.environment)(t)
-        case (q: ScalaClass) => evaluateName(q.environment)(t)
+        // case (q: ScalaClass) => evaluateName(q.environment)(t)
         case q @ _ => Failure(TastyEvaluationError(s"don't know how to select in ${q}")))
     case (t: Lambda) => evaluateLambda(env)(t)
     case (t: Ident) => evaluateIdent(env)(t)
@@ -50,8 +50,10 @@ def evaluateClassDef(env: ScalaEnvironment)(tree: ClassDef)(using Context): Try[
   Success(ScalaUnit)
 
 def evaluateNew(env: ScalaEnvironment)(tree: New)(using Context): Try[ScalaObject] =
+  // todo: pass tree.tpt through evaluateTypeTree
   evaluateTypeIdent(env)(tree.tpt.asInstanceOf[TypeIdent])
-    .map(_.asInstanceOf[ScalaClass])
+    .map(_ match
+      case (c: ScalaClass) => c)
     .map(cls =>
       val objEnv = ScalaEnvironment(Some(cls.environment))
       val obj = ScalaObject(objEnv)
@@ -87,14 +89,15 @@ def evaluateBlock(env: ScalaEnvironment)(tree: Block)(using Context): Try[ScalaT
   mapUnderTry(tree.stats, evaluate(env)).flatMap(_ => evaluate(env)(tree.expr))
 
 def evaluateApply(env: ScalaEnvironment)(tree: Apply)(using Context): Try[ScalaValue] =
-  // ignore possibility of call-by-name  
+  // ignore possibility of call-by-name
   evaluate(env)(tree.fun).flatMap(fun => fun match
     case (f: ScalaApplicable) => f.apply(env, tree.args)
     case _ => Failure(TastyEvaluationError(s"can't apply ${fun}")))
 
 def evaluateLambda(env: ScalaEnvironment)(tree: Lambda)(using Context): Try[ScalaFunctionObject] =
-  evaluate(env)(tree.meth).map(meth =>
-    ScalaFunctionObject(ScalaEnvironment(Some(env)), meth.asInstanceOf[ScalaMethod]))
+  evaluate(env)(tree.meth)
+    .map(_.asInstanceOf[ScalaMethod])
+    .map(meth => ScalaFunctionObject(ScalaEnvironment(Some(env)), meth))
 
 def evaluateName(env: ScalaEnvironment)(tree: TermName)(using Context): Try[ScalaTerm] =
   tree match
@@ -106,11 +109,3 @@ def evaluateIdent(env: ScalaEnvironment)(tree: Ident)(using Context): Try[ScalaT
 
 def evaluateTypeIdent(env: ScalaEnvironment)(tree: TypeIdent)(using Context): Try[ScalaType] =
   env.lookup(tree.name)
-
-// def evaluateAssign(env: ScalaEnvironment)(tree: Assign)(using Context): Try[ScalaUnit] =
-//   evaluate(env)(tree.lhs).flatMap { _ match
-//     case (lhs: ScalaReference) =>
-//       evaluate(env)(tree.rhs).map(rhs => lhs.set(rhs))
-//   }.map(_ => ScalaUnit)
-  
-  
