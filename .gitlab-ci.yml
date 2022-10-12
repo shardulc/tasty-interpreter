@@ -16,6 +16,13 @@
 # This specific template is located at:
 # https://gitlab.com/gitlab-org/gitlab/-/blob/master/lib/gitlab/ci/templates/Getting-Started.gitlab-ci.yml
 
+cache:
+  key:
+    files:
+      - package-lock.json
+  paths:
+    - .npm/
+
 stages:          # List of stages for jobs, and their order of execution
   - setup
   - sbt-test
@@ -23,11 +30,7 @@ stages:          # List of stages for jobs, and their order of execution
 setup-job:
   stage: setup
   script:
-    - npm install
-  cache:
-    key: ${CI_BUILD_REF_NAME}
-    paths:
-      - node_modules/
+    - npm ci --cache .npm --prefer-offline
   artifacts:
     paths:
       - node_modules/
