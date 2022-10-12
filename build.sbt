@@ -21,7 +21,7 @@ lazy val root = (project in file("."))
 
     // this is locally published from LAMP/scala-js/tasty-query
     libraryDependencies += "tasty-query" %%% "tasty-query" % "0.1-SNAPSHOT"
-      from "file://" + baseDirectory.value.getPath() + "lib/tasty-query_sjs1_3.jar",
+      from "file://" + baseDirectory.value.getPath() + "/lib/tasty-query_sjs1_3.jar",
     libraryDependencies += "org.scalameta" %%% "munit" % "0.7.29" % Test,
   ))
 
