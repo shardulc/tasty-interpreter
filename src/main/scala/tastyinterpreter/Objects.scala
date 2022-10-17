@@ -2,7 +2,6 @@ package tastyinterpreter
 
 import scala.annotation.targetName
 import scala.collection.mutable
-import scala.util.{ Try, Success, Failure }
 
 import tastyquery.Types.Type
 import tastyquery.Contexts.Context
@@ -38,31 +37,38 @@ sealed trait ScalaType extends ScalaEntity
 
 class ScalaEnvironment(
     parent: Option[ScalaEnvironment],
-    termBindings: mutable.HashMap[TermName, ScalaTerm] = mutable.HashMap.empty,
-    typeBindings: mutable.HashMap[TypeName, ScalaType] = mutable.HashMap.empty):
+    termBindings: mutable.HashMap[TermSymbol, ScalaTerm] = mutable.HashMap.empty,
+    termNameBindings: mutable.HashMap[TermName, ScalaTerm] = mutable.HashMap.empty,
+    typeBindings: mutable.HashMap[TypeSymbol, ScalaType] = mutable.HashMap.empty,
+    typeNameBindings: mutable.HashMap[TypeName, ScalaType] = mutable.HashMap.empty):
 
-  def apply(name: TermName): ScalaTerm = termBindings(name)
-  def apply(name: TypeName): ScalaType = typeBindings(name)
+  // def apply(symbol: TermSymbol): ScalaTerm = termBindings(symbol)
+  // def apply(symbol: TypeSymbol): ScalaType = typeBindings(symbol)
 
-  def update(name: TermName, value: ScalaTerm): Unit =
-    termBindings.getOrElseUpdate(name, value)
-  def update(name: TypeName, value: ScalaType): Unit =
-    typeBindings.getOrElseUpdate(name, value)
+  def update(symbol: TermSymbol, value: ScalaTerm): Unit =
+    termBindings.update(symbol, value)
+  def update(symbol: TypeSymbol, value: ScalaType): Unit =
+    typeBindings.update(symbol, value)
+  def updateName(symbol: TermName, value: ScalaTerm): Unit =
+    termNameBindings.update(symbol, value)
+  def updateName(symbol: TypeName, value: ScalaType): Unit =
+    typeNameBindings.update(symbol, value)
 
-  def bindAll(namesAndValues: IterableOnce[(TermName, ScalaTerm)]): Unit =
-    termBindings.addAll(namesAndValues)
+  def bindAll(symbolsAndValues: IterableOnce[(TermSymbol, ScalaTerm)]): Unit =
+    termBindings.addAll(symbolsAndValues)
   @targetName("bindAllTypes")
-  def bindAll(namesAndValues: IterableOnce[(TypeName, ScalaType)]): Unit =
-    typeBindings.addAll(namesAndValues)
+  def bindAll(symbolsAndValues: IterableOnce[(TypeSymbol, ScalaType)]): Unit =
+    typeBindings.addAll(symbolsAndValues)
 
-  def lookup(name: TermName): Try[ScalaTerm] =
-    termBindings.get(name).map(Success(_))
-      .getOrElse(parent.fold(Failure(TastyEvaluationError(s"${name} not found")))
-        (_.lookup(name)))
-  def lookup(name: TypeName): Try[ScalaType] =
-    typeBindings.get(name).map(Success(_))
-      .getOrElse(parent.fold(Failure(TastyEvaluationError(s"${name} not found")))
-        (_.lookup(name)))
+  def lookup(symbol: TermSymbol): ScalaTerm =
+    termBindings.getOrElse(symbol,
+      termNameBindings.getOrElse(symbol.name, parent.get.lookup(symbol)))
+  def lookup(symbol: TypeSymbol): ScalaType =
+    typeBindings.getOrElse(symbol,
+      typeNameBindings.getOrElse(symbol.name, parent.get.lookup(symbol)))
+  def lookupByName(name: TermName): ScalaTerm =
+    val nameBindings = termBindings.map((sym, v) => (sym.name, v)) ++ termNameBindings
+    nameBindings.getOrElse(name, parent.fold(throw TastyEvaluationError(name.toString))(_.lookupByName(name)))
 
   override def toString(): String =
     s"""term bindings: ${termBindings.keysIterator.toList.toString()}
@@ -77,12 +83,13 @@ case class ScalaClass(
     body: List[Tree]) extends ScalaType
 
 class ScalaObject(val environment: ScalaEnvironment) extends ScalaValue
+class ScalaUninitializedObject(val environment: ScalaEnvironment, val toBeObject: Block) extends ScalaValue
 
 class ScalaFunctionObject(override val environment: ScalaEnvironment, method: ScalaMethod)
     extends ScalaObject(environment):
-  environment(termName("apply")) = BuiltInMethod { (env, arguments, ctx) =>
-    method.apply(env, arguments)(using ctx)
-  }
+  environment.updateName(termName("apply"), BuiltInMethod { (arguments, ctx) =>
+    method.apply(arguments)(using ctx)
+  })
 
 trait ScalaValueExtractor[T](val value: T)
 
@@ -93,41 +100,39 @@ trait ScalaValueExtractor[T](val value: T)
  */
 class ScalaInt(override val value: Int) extends ScalaObject(ScalaEnvironment(None))
     with ScalaValueExtractor(value):
-  environment(termName("+")) = BuiltInMethod { (env, arguments, ctx) =>
-    mapUnderTry(arguments, evaluate(env)(_)(using ctx)).flatMap(_ match
-      case (a: ScalaInt) :: Nil => Success(ScalaInt(a.value + this.value))
-      case _ => Failure(TastyEvaluationError("wrong args for Int +")))
-  }
+  environment.updateName(termName("+"), BuiltInMethod { (arguments, ctx) =>
+    arguments match
+      case (a: ScalaInt) :: Nil => ScalaInt(a.value + this.value)
+      case _ => throw TastyEvaluationError("wrong args for Int +")
+  })
 
 object ScalaUnit extends ScalaObject(ScalaEnvironment(None))
 type ScalaUnit = ScalaUnit.type
 
 sealed trait ScalaApplicable extends ScalaTerm:
-  def apply(callingEnvironment: ScalaEnvironment, arguments: List[Tree])
-    (using Context): Try[ScalaValue] 
+  def apply(arguments: List[ScalaTerm])
+    (using Context): ScalaValue 
 
 class ScalaMethod(
     parent: ScalaEnvironment,
-    parameters: List[TermName],
+    parameters: List[TermSymbol],
     // returnType: ScalaType,
     body: Tree,
     isConstructor: Boolean = false) extends ScalaApplicable:
-  override def apply(callingEnvironment: ScalaEnvironment, arguments: List[Tree])
-      (using Context): Try[ScalaValue] =
+  override def apply(arguments: List[ScalaTerm])
+      (using Context): ScalaValue =
     val callEnvironment =
       if isConstructor then parent
       else ScalaEnvironment(Some(parent), mutable.HashMap.empty)
-    mapUnderTry(arguments, evaluate(callingEnvironment))
-      .map(args => callEnvironment.bindAll(parameters.zip(args)))
-      .flatMap(_ => evaluate(callEnvironment)(body))
-      .flatMap { _ match
-        case (result: ScalaApplicable) => result.apply(callEnvironment, List.empty)
-        case (result: ScalaValue) => Success(result)
-      }
+    callEnvironment.bindAll(parameters.zip(arguments))
+    evaluate(callEnvironment)(body) match
+      case (result: ScalaApplicable) => result.apply(List.empty)
+      case (result: ScalaValue) => result
+
       
 
 class BuiltInMethod[T <: ScalaValue]
-    (underlying: Function3[ScalaEnvironment, List[Tree], Context, Try[T]]) extends ScalaApplicable:
-  override def apply(callingEnvironment: ScalaEnvironment, arguments: List[Tree])
-      (using ctx: Context): Try[T] =
-    underlying(callingEnvironment, arguments, ctx)
+    (underlying: Function2[List[ScalaTerm], Context, T]) extends ScalaApplicable:
+  override def apply(arguments: List[ScalaTerm])
+      (using ctx: Context): T =
+    underlying(arguments, ctx)

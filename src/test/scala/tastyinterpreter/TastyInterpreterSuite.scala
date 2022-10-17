@@ -39,20 +39,18 @@ class TastyInterpreterSuite extends FunSuite:
   def evaluateDeclarationsInPackage(
       environment: ScalaEnvironment = ScalaEnvironment(None),
       packageName: FullyQualifiedName)(using ctx: Context, l: Location) =
-    mapUnderTry(
-      ctx.findPackageFromRoot(packageName).asPackage.declarations
-        // asInstanceOf is safe because all DefTree subclasses are Tree subclasses
-        .map(_.tree.get.asInstanceOf[Tree]),
-      evaluate(environment))
+    ctx.findPackageFromRoot(packageName).asPackage.declarations
+      // asInstanceOf is safe because all DefTree subclasses are Tree subclasses
+      .map(_.tree.get.asInstanceOf[Tree])
+      .foreach(evaluate(environment))
 
   def evaluateAndCheck(environment: ScalaEnvironment)(tree: Tree, check: ScalaTerm => Unit)
       (using Context, Location) =
-    evaluate(environment)(tree).map(check)
-      .recover { case (e: TastyEvaluationError) => fail(e.toString()) }
+    check(evaluate(environment)(tree))
 
-  def testWithCtx(testName: String)(testBody: Context => scala.util.Try[Any])
+  def testWithCtx(testName: String)(testBody: Context => Any)
       (using Location)=
-    test(testName) { ctx().map { ctx => testBody(ctx).get } }
+    test(testName) { ctx().map { ctx => testBody(ctx) } }
 
   def assertScalaEquals[T](expected: => T)(result: ScalaTerm) =
     assert(clue(result.asInstanceOf[ScalaValueExtractor[T]].value) == expected)
