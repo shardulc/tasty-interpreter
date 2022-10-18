@@ -83,7 +83,10 @@ case class ScalaClass(
     body: List[Tree]) extends ScalaType
 
 class ScalaObject(val environment: ScalaEnvironment) extends ScalaValue
-class ScalaUninitializedObject(val environment: ScalaEnvironment, val toBeObject: Block) extends ScalaValue
+class ScalaLazyValue[T <: ScalaValue](environment: ScalaEnvironment, toBeValue: Block)(using Context) extends ScalaValue:
+  lazy val value = evaluateBlock(environment)(toBeValue).asInstanceOf[T]
+class ScalaLazyObject(environment: ScalaEnvironment, toBeValue: Block)(using Context)
+    extends ScalaLazyValue[ScalaObject](environment, toBeValue)
 
 class ScalaFunctionObject(override val environment: ScalaEnvironment, method: ScalaMethod)
     extends ScalaObject(environment):

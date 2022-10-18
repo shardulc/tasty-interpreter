@@ -27,10 +27,8 @@ def evaluate(env: ScalaEnvironment)(tree: Tree)(using Context): ScalaTerm =
     case (t: Apply) => evaluateApply(env)(t)
     case Select(qualifier, t) =>
       evaluate(env)(qualifier) match
-        case (q: ScalaUninitializedObject) =>
-          val obj = evaluateBlock(q.environment)(q.toBeObject)
-            .asInstanceOf[ScalaObject]
-          evaluateName(obj.environment)(t)
+        case (q: ScalaLazyObject) =>
+          evaluateName(q.value.environment)(t)
         case (q: ScalaObject) => evaluateName(q.environment)(t)
         // case (q: ScalaClass) => evaluateName(q.environment)(t)
         case q @ _ => throw TastyEvaluationError(s"don't know how to select in ${q}")
@@ -54,7 +52,12 @@ def evaluateNew(env: ScalaEnvironment)(tree: New)(using Context): ScalaObject =
       val objEnv = ScalaEnvironment(Some(cls.environment))
       val obj = ScalaObject(objEnv)
       val constructor = cls.constr.copy(
-        rhs = InterpreterLiteral(ScalaUninitializedObject(objEnv, Block(cls.body, InterpreterLiteral(obj))(NoSpan))))(NoSpan)
+        rhs = InterpreterLiteral(
+          ScalaLazyObject(
+            objEnv,
+            Block(cls.body, InterpreterLiteral(obj))(NoSpan)
+          )
+        ))(NoSpan)
       evaluateDefDef(objEnv)(constructor, isConstructor = true)
       obj
 
