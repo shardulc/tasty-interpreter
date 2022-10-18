@@ -49,9 +49,9 @@ class ScalaEnvironment(
     termBindings.update(symbol, value)
   def update(symbol: TypeSymbol, value: ScalaType): Unit =
     typeBindings.update(symbol, value)
-  def updateName(symbol: TermName, value: ScalaTerm): Unit =
+  def updateByName(symbol: TermName, value: ScalaTerm): Unit =
     termNameBindings.update(symbol, value)
-  def updateName(symbol: TypeName, value: ScalaType): Unit =
+  def updateByName(symbol: TypeName, value: ScalaType): Unit =
     typeNameBindings.update(symbol, value)
 
   def bindAll(symbolsAndValues: IterableOnce[(TermSymbol, ScalaTerm)]): Unit =
@@ -66,7 +66,7 @@ class ScalaEnvironment(
   def lookup(symbol: TypeSymbol): ScalaType =
     typeBindings.getOrElse(symbol,
       typeNameBindings.getOrElse(symbol.name, parent.get.lookup(symbol)))
-  def lookupByName(name: TermName): ScalaTerm =
+  def lookupByName(name: TermName)(using Context): ScalaTerm =
     val nameBindings = termBindings.map((sym, v) => (sym.name, v)) ++ termNameBindings
     nameBindings.getOrElse(name, parent.fold(throw TastyEvaluationError(name.toString))(_.lookupByName(name)))
 
@@ -87,7 +87,7 @@ class ScalaUninitializedObject(val environment: ScalaEnvironment, val toBeObject
 
 class ScalaFunctionObject(override val environment: ScalaEnvironment, method: ScalaMethod)
     extends ScalaObject(environment):
-  environment.updateName(termName("apply"), BuiltInMethod { (arguments, ctx) =>
+  environment.updateByName(termName("apply"), BuiltInMethod { (arguments, ctx) =>
     method.apply(arguments)(using ctx)
   })
 
@@ -100,7 +100,7 @@ trait ScalaValueExtractor[T](val value: T)
  */
 class ScalaInt(override val value: Int) extends ScalaObject(ScalaEnvironment(None))
     with ScalaValueExtractor(value):
-  environment.updateName(termName("+"), BuiltInMethod { (arguments, ctx) =>
+  environment.updateByName(termName("+"), BuiltInMethod { (arguments, ctx) =>
     arguments match
       case (a: ScalaInt) :: Nil => ScalaInt(a.value + this.value)
       case _ => throw TastyEvaluationError("wrong args for Int +")
