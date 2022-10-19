@@ -7,6 +7,7 @@ import tastyquery.Spans.NoSpan
 import tastyquery.Types.*
 
 import testinputs.basic
+import testinputs.otherbasic
 
 class BasicSuite extends TastyInterpreterSuite:
 
@@ -23,3 +24,13 @@ class BasicSuite extends TastyInterpreterSuite:
       .map(evaluateAndCheck(globalEnv))
   }
 
+  testWithCtx("inner class") {
+    val globalEnv = globalEnvironment()
+    // evaluateDeclarationsInPackage(globalEnv, makePackageName("testinputs", "otherbasic"))
+    // println(globalEnv.toString)
+      // mapUnderTry(List(
+      //   (Select(TermRefTree(termName("BarTest").withObjectSuffix, NoType)(NoSpan), termName("seven"))(NoSpan),
+      //     assertScalaEquals(basic.BarTest.seven))),
+      //   evaluateAndCheck(globalEnv))
+      
+  }
