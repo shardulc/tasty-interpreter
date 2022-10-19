@@ -8,6 +8,7 @@ import tastyquery.Names.*
 import tastyquery.TypeTrees.TypeIdent
 import tastyquery.Spans.NoSpan
 import tastyquery.Spans.Span
+import tastyquery.Types.*
 import tastyquery.Constants.Constant
 
 
@@ -15,6 +16,7 @@ class TastyEvaluationError(m: String) extends RuntimeException(m)
 
 case class InterpreterLiteral(term: ScalaTerm) extends Tree(NoSpan):
   override def withSpan(span: Span): Tree = InterpreterLiteral(term)
+  override protected def calculateType(using Context): Type = ???
 
 
 def evaluate(env: ScalaEnvironment)(tree: Tree)(using Context): ScalaTerm =
@@ -47,7 +49,7 @@ def evaluateClassDef(env: ScalaEnvironment)(tree: ClassDef)(using Context): Scal
   ScalaUnit
 
 def evaluateNew(env: ScalaEnvironment)(tree: New)(using Context): ScalaObject =
-  env.lookup(tree.tpe.typeSymbol.asType) match
+  env.lookup(tree.tpe.asInstanceOf[TypeRef].symbol) match
     case (cls: ScalaClass) =>
       val objEnv = ScalaEnvironment(Some(cls.environment))
       val obj = ScalaObject(objEnv)
