@@ -14,10 +14,12 @@ import tastyquery.Trees.*
 import tastyquery.Spans.NoSpan
 import tastyquery.Types.NoType
 
+import tastyinterpreter.generated.TestClasspaths
+
 class TastyInterpreterSuite extends FunSuite:
 
-  val classpaths = List(
-    "target/scala-3.1.3/test-classes/",
+  val classpaths = TestClasspaths.classpaths ++ List(
+    "target/scala-3.1.3/test-classes/"
   )
 
   val ctx = new Fixture[Future[Context]]("context") {
