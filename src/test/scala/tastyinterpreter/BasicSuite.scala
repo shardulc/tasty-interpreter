@@ -4,20 +4,21 @@ import tastyquery.Contexts.Context
 import tastyquery.Names.*
 import tastyquery.Trees.*
 import tastyquery.Spans.NoSpan
-import tastyquery.Types.NoType
+import tastyquery.Types.*
 
 import testinputs.basic
 
 class BasicSuite extends TastyInterpreterSuite:
 
-  testWithCtx("classes and objects") { ctx =>
-    given Context = ctx
+  testWithCtx("classes and objects") {
     val globalEnv = globalEnvironment()
-    evaluateDeclarationsInPackage(globalEnv, makePackageName("testinputs", "basic"))
+    val basicPkg = makePackageName("testinputs", "basic")
+    evaluateDeclarationsInPackage(globalEnv, basicPkg)
+
     List(
-      (Apply(makeSelectTree("Foo", "doit"), List.empty)(NoSpan),
+      (Apply(makeSelectTree(basicPkg, "Foo", "doit"), List.empty)(NoSpan),
         assertScalaEquals(basic.Foo.doit)),
-      (Apply(makeSelectTree("Foo", "doitagain"), List.empty)(NoSpan),
+      (Apply(makeSelectTree(basicPkg, "Foo", "doitagain"), List.empty)(NoSpan),
         assertScalaEquals(basic.Foo.doitagain)))
       .map(evaluateAndCheck(globalEnv))
   }
