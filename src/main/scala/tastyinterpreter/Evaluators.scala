@@ -43,11 +43,7 @@ def evaluateClassDef(env: ScalaEnvironment)(tree: ClassDef)(using Context): Scal
   ScalaUnit
 
 def evaluateNew(env: ScalaEnvironment)(tree: New)(using Context): ScalaObject =
-  val prefix = tree.tpe.asInstanceOf[TypeRef].prefix
-  val envi = if prefix.isInstanceOf[TermRef] then
-    env.lookup(prefix.asInstanceOf[TermRef].symbol).value.asInstanceOf[ScalaObject].environment
-    else env
-  envi.lookup(tree.tpe.asInstanceOf[TypeRef].symbol).value match
+  TypeEvaluators.evaluate(env)(tree.tpe).value match
     case (cls: ScalaClass) =>
       lazy val (objEnv: ScalaEnvironment, obj: ScalaObject) =
         (ScalaEnvironment(Some(cls.environment), Some(obj)), ScalaObject(objEnv))
