@@ -26,11 +26,11 @@ class BasicSuite extends TastyInterpreterSuite:
 
   testWithCtx("inner class") {
     val globalEnv = globalEnvironment()
-    // evaluateDeclarationsInPackage(globalEnv, makePackageName("testinputs", "otherbasic"))
-    // println(globalEnv.toString)
-      // mapUnderTry(List(
-      //   (Select(TermRefTree(termName("BarTest").withObjectSuffix, NoType)(NoSpan), termName("seven"))(NoSpan),
-      //     assertScalaEquals(basic.BarTest.seven))),
-      //   evaluateAndCheck(globalEnv))
-      
+    val basicPkg = makePackageName("testinputs", "otherbasic")
+    evaluateDeclarationsInPackage(globalEnv, basicPkg)
+
+    List(
+      (Apply(makeSelectTree(basicPkg, "Foo", "doit"), List.empty)(NoSpan),
+        assertScalaEquals(otherbasic.Foo.doit)))
+      .map(evaluateAndCheck(globalEnv))
   }

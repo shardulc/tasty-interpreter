@@ -24,6 +24,7 @@ sealed ScalaEntity
    -- sealed ScalaApplicable
       -- ScalaMethod
       -- BuiltInMethod
+   -- ScalaLazyValue
 -- sealed ScalaType
    -- ScalaClass
 
@@ -37,11 +38,12 @@ sealed trait ScalaType extends ScalaEntity
 
 class ScalaEnvironment(
     parent: Option[ScalaEnvironment],
+    thisObj: => Option[ScalaObject] = None,
     termBindings: mutable.HashMap[TermSymbol, ScalaTerm] = mutable.HashMap.empty,
     typeBindings: mutable.HashMap[TypeSymbol, ScalaType] = mutable.HashMap.empty):
 
-  // def apply(symbol: TermSymbol): ScalaTerm = termBindings(symbol)
-  // def apply(symbol: TypeSymbol): ScalaType = typeBindings(symbol)
+  private lazy val thisObject = thisObj
+  def getThisObject: ScalaObject = thisObj.getOrElse(parent.get.getThisObject)
 
   def update(symbol: TermSymbol, value: ScalaTerm): Unit =
     termBindings.update(symbol, value)
@@ -54,12 +56,10 @@ class ScalaEnvironment(
   def bindAll(symbolsAndValues: IterableOnce[(TypeSymbol, ScalaType)]): Unit =
     typeBindings.addAll(symbolsAndValues)
 
-  def lookup(symbol: TermSymbol, top: Boolean = true): ScalaTerm =
-    termBindings.getOrElse(symbol,
-      parent.get.lookup(symbol, top = false))
+  def lookup(symbol: TermSymbol): ScalaTerm =
+    termBindings.getOrElse(symbol, parent.get.lookup(symbol))
   def lookup(symbol: TypeSymbol): ScalaType =
-    typeBindings.getOrElse(symbol,
-      parent.get.lookup(symbol))
+    typeBindings.getOrElse(symbol, parent.get.lookup(symbol))
 
   override def toString(): String =
     s"""term bindings: ${termBindings.keysIterator.toList.map(s => s.name.toString() + s.owner.toString + s.flags.toString() )}
@@ -73,22 +73,20 @@ case class ScalaClass(
     constr: DefDef,
     body: List[Tree]) extends ScalaType
 
-class ScalaObject(val environment: ScalaEnvironment) extends ScalaValue
-class ScalaLazyValue[T <: ScalaValue](environment: ScalaEnvironment, toBeValue: Block)(using Context) extends ScalaValue:
-  lazy val value = evaluateBlock(environment)(toBeValue).asInstanceOf[T]
-class ScalaLazyObject(environment: ScalaEnvironment, toBeValue: Block)(using Context)
-    extends ScalaLazyValue[ScalaObject](environment, toBeValue)
+class ScalaObject(env: => ScalaEnvironment) extends ScalaValue:
+  lazy val environment = env
+class ScalaLazyValue(valueDefinition: => ScalaValue)(using Context) extends ScalaTerm:
+  lazy val value = valueDefinition
 
-class ScalaFunctionObject(override val environment: ScalaEnvironment, method: ScalaMethod)(using Context)
-    extends ScalaObject(environment):
+class ScalaFunctionObject(env: => ScalaEnvironment, method: ScalaMethod)(using Context)
+    extends ScalaObject(env):
+  override lazy val environment: ScalaEnvironment = env
   val applySymbol = defn.Function0Class.getDecl(termName("apply")).get.asTerm
   environment.update(applySymbol, BuiltInMethod { arguments  =>
     method.apply(arguments)(using ctx)
   })
 
 trait ScalaValueExtractor[T](val value: T)
-
-// class Scala
 
 class ScalaInt(override val value: Int)(using Context) extends ScalaObject(ScalaEnvironment(None))
     with ScalaValueExtractor(value):
@@ -105,25 +103,24 @@ class ScalaInt(override val value: Int)(using Context) extends ScalaObject(Scala
 object ScalaUnit extends ScalaObject(ScalaEnvironment(None))
 type ScalaUnit = ScalaUnit.type
 
+
 sealed trait ScalaApplicable extends ScalaTerm:
   def apply(arguments: List[ScalaTerm])(using Context): ScalaValue 
 
 class ScalaMethod(
     parent: ScalaEnvironment,
     parameters: List[TermSymbol],
-    // returnType: ScalaType,
     body: Tree,
     isConstructor: Boolean = false) extends ScalaApplicable:
   override def apply(arguments: List[ScalaTerm])(using Context): ScalaValue =
     val callEnvironment =
       if isConstructor then parent
-      else ScalaEnvironment(Some(parent), mutable.HashMap.empty)
+      else ScalaEnvironment(Some(parent))
     callEnvironment.bindAll(parameters.zip(arguments))
     evaluate(callEnvironment)(body) match
       case (result: ScalaApplicable) => result.apply(List.empty)
       case (result: ScalaValue) => result
-
-      
+      case (result: ScalaLazyValue) => result.value
 
 class BuiltInMethod[T <: ScalaValue]
     (underlying: List[ScalaTerm] => Context ?=> T) extends ScalaApplicable:
