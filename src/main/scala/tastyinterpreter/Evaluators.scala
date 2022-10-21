@@ -13,7 +13,7 @@ import tastyquery.Flags
 
 class TastyEvaluationError(m: String) extends RuntimeException(m)
 
-def evaluate(env: ScalaEnvironment)(tree: Tree)(using Context): ScalaTerm =
+def evaluate(env: ScalaEnvironment)(tree: Tree)(using Context): ScalaBox[ScalaTerm] =
   tree match
     case (t: ClassDef) => evaluateClassDef(env)(t)
     case (t: New) => evaluateNew(env)(t)
@@ -22,7 +22,7 @@ def evaluate(env: ScalaEnvironment)(tree: Tree)(using Context): ScalaTerm =
     case (t: Block) => evaluateBlock(env)(t)
     case (t: Apply) => evaluateApply(env)(t)
     case ts @ Select(qualifier, t) =>
-      {evaluate(env)(qualifier) match
+      {evaluate(env)(qualifier).value match
           case (q: ScalaObject) => q
           case (q: ScalaLazyValue) if q.value.isInstanceOf[ScalaObject] =>
             q.value.asInstanceOf[ScalaObject]
@@ -35,6 +35,7 @@ def evaluate(env: ScalaEnvironment)(tree: Tree)(using Context): ScalaTerm =
     case Literal(Constant(t: Int)) => ScalaInt(t)
     case Literal(Constant(_: Unit)) => ScalaUnit
     case (t: This) => evaluateThis(env)(t)
+    case (t: Assign) => evaluateAssign(env)(t)
     case t @ _ => throw TastyEvaluationError(s"not implemented for ${t.toString}")
 
 def evaluateClassDef(env: ScalaEnvironment)(tree: ClassDef)(using Context): ScalaUnit =
@@ -44,9 +45,9 @@ def evaluateClassDef(env: ScalaEnvironment)(tree: ClassDef)(using Context): Scal
 def evaluateNew(env: ScalaEnvironment)(tree: New)(using Context): ScalaObject =
   val prefix = tree.tpe.asInstanceOf[TypeRef].prefix
   val envi = if prefix.isInstanceOf[TermRef] then
-    env.lookup(prefix.asInstanceOf[TermRef].symbol).asInstanceOf[ScalaObject].environment
+    env.lookup(prefix.asInstanceOf[TermRef].symbol).value.asInstanceOf[ScalaObject].environment
     else env
-  envi.lookup(tree.tpe.asInstanceOf[TypeRef].symbol) match
+  envi.lookup(tree.tpe.asInstanceOf[TypeRef].symbol).value match
     case (cls: ScalaClass) =>
       lazy val (objEnv: ScalaEnvironment, obj: ScalaObject) =
         (ScalaEnvironment(Some(cls.environment), Some(obj)), ScalaObject(objEnv))
@@ -73,7 +74,7 @@ def evaluateThis(env: ScalaEnvironment)(t: This)(using Context): ScalaObject =
 def evaluateValDef(env: ScalaEnvironment)(tree: ValDef)(using Context): ScalaUnit =
   // condition is true for fields referenced in templates
   if tree.rhs == EmptyTree then ScalaUnit else {
-    def evaledRhs = evaluate(env)(tree.rhs) match
+    def evaledRhs = evaluate(env)(tree.rhs).value match
       case (result: ScalaApplicable) => result.apply(List.empty)
       case (result: ScalaValue) => result
       case (result: ScalaLazyValue) => result.value
@@ -81,6 +82,10 @@ def evaluateValDef(env: ScalaEnvironment)(tree: ValDef)(using Context): ScalaUni
       if tree.symbol.is(Flags.Lazy) then ScalaLazyValue(evaledRhs)
       else evaledRhs
     ScalaUnit}
+
+def evaluateAssign(env: ScalaEnvironment)(tree: Assign)(using Context): ScalaUnit =
+  evaluate(env)(tree.lhs).set(evaluate(env)(tree.rhs))
+  ScalaUnit
 
 def evaluateDefDef(env: ScalaEnvironment)(tree: DefDef, isConstructor: Boolean = false)
     (using Context): ScalaUnit =
@@ -98,13 +103,13 @@ def evaluateBlock(env: ScalaEnvironment)(tree: Block)(using Context): ScalaTerm 
 
 def evaluateApply(env: ScalaEnvironment)(tree: Apply)(using Context): ScalaValue =
   // ignore possibility of call-by-name
-  evaluate(env)(tree.fun) match
+  evaluate(env)(tree.fun).value match
     case (f: ScalaApplicable) => f.apply(tree.args.map(evaluate(env)))
     case f @ _ => throw TastyEvaluationError(s"can't apply ${f}")
 
 def evaluateLambda(env: ScalaEnvironment)(tree: Lambda)(using c: Context): ScalaFunctionObject =
-  val method = evaluate(env)(tree.meth).asInstanceOf[ScalaMethod]
+  val method = evaluate(env)(tree.meth).value.asInstanceOf[ScalaMethod]
   ScalaFunctionObject(ScalaEnvironment(Some(env)), method)
 
-def evaluateIdent(env: ScalaEnvironment)(tree: Ident)(using Context): ScalaTerm =
+def evaluateIdent(env: ScalaEnvironment)(tree: Ident)(using Context): ScalaBox[ScalaTerm] =
   env.lookup(tree.tpe.asInstanceOf[TermRef].symbol)

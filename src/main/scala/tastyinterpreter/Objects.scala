@@ -2,6 +2,7 @@ package tastyinterpreter
 
 import scala.annotation.targetName
 import scala.collection.mutable
+import scala.language.implicitConversions
 
 import tastyquery.Contexts.*
 import tastyquery.Names.*
@@ -36,11 +37,18 @@ sealed trait ScalaTerm extends ScalaEntity
 sealed trait ScalaValue extends ScalaTerm
 sealed trait ScalaType extends ScalaEntity
 
+class ScalaBox[T](initValue: T):
+  var value = initValue
+  def set(other: T) = value = other
+
+implicit def box2value[T](box: ScalaBox[T]): T = box.value
+implicit def value2box[T](value: T): ScalaBox[T] = ScalaBox(value)
+
 class ScalaEnvironment(
     parent: Option[ScalaEnvironment],
     thisObj: => Option[ScalaObject] = None,
-    termBindings: mutable.HashMap[TermSymbol, ScalaTerm] = mutable.HashMap.empty,
-    typeBindings: mutable.HashMap[TypeSymbol, ScalaType] = mutable.HashMap.empty):
+    termBindings: mutable.HashMap[TermSymbol, ScalaBox[ScalaTerm]] = mutable.HashMap.empty,
+    typeBindings: mutable.HashMap[TypeSymbol, ScalaBox[ScalaType]] = mutable.HashMap.empty):
 
   private lazy val thisObject = thisObj
   def getThisObject: ScalaObject = thisObj.getOrElse(parent.get.getThisObject)
@@ -50,15 +58,15 @@ class ScalaEnvironment(
   def update(symbol: TypeSymbol, value: ScalaType): Unit =
     typeBindings.update(symbol, value)
 
-  def bindAll(symbolsAndValues: IterableOnce[(TermSymbol, ScalaTerm)]): Unit =
-    termBindings.addAll(symbolsAndValues)
+  def bindAll(symbolsAndValues: Iterable[(TermSymbol, ScalaTerm)]): Unit =
+    termBindings.addAll(symbolsAndValues.map((s, t) => (s, t)))
   @targetName("bindAllTypes")
-  def bindAll(symbolsAndValues: IterableOnce[(TypeSymbol, ScalaType)]): Unit =
-    typeBindings.addAll(symbolsAndValues)
+  def bindAll(symbolsAndValues: Iterable[(TypeSymbol, ScalaType)]): Unit =
+    typeBindings.addAll(symbolsAndValues.map((s, t) => (s, t)))
 
-  def lookup(symbol: TermSymbol): ScalaTerm =
+  def lookup(symbol: TermSymbol): ScalaBox[ScalaTerm] =
     termBindings.getOrElse(symbol, parent.get.lookup(symbol))
-  def lookup(symbol: TypeSymbol): ScalaType =
+  def lookup(symbol: TypeSymbol): ScalaBox[ScalaType] =
     typeBindings.getOrElse(symbol, parent.get.lookup(symbol))
 
   override def toString(): String =
@@ -117,7 +125,7 @@ class ScalaMethod(
       if isConstructor then parent
       else ScalaEnvironment(Some(parent))
     callEnvironment.bindAll(parameters.zip(arguments))
-    evaluate(callEnvironment)(body) match
+    evaluate(callEnvironment)(body).value match
       case (result: ScalaApplicable) => result.apply(List.empty)
       case (result: ScalaValue) => result
       case (result: ScalaLazyValue) => result.value

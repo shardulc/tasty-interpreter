@@ -34,3 +34,18 @@ class BasicSuite extends TastyInterpreterSuite:
         assertScalaEquals(otherbasic.Foo.doit)))
       .map(evaluateAndCheck(globalEnv))
   }
+
+  testWithCtx("closures") { ctx ?=>
+    val globalEnv = globalEnvironment()
+    val basicPkg = makePackageName("testinputs", "basic")
+    evaluateDeclarationsInPackage(globalEnv, basicPkg)
+
+    List(
+      (makeSelectTree(basicPkg, "Closures$package", "y"),
+        assertScalaEquals(basic.y)),
+      (makeSelectTree(basicPkg, "Closures$package", "z"),
+        assertScalaEquals(basic.z)),
+      (makeSelectTree(basicPkg, "Closures$package", "yy"),
+        assertScalaEquals(basic.yy)))
+      .map(evaluateAndCheck(globalEnv))
+  }
