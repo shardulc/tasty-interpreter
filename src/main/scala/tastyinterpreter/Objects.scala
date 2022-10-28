@@ -25,6 +25,7 @@ sealed ScalaEntity
    -- sealed ScalaApplicable
       -- ScalaMethod
       -- BuiltInMethod
+      -- ScalaConstructor
    -- ScalaLazyValue
 -- sealed ScalaType
    -- ScalaClass
@@ -75,20 +76,19 @@ type bindings: ${typeBindings.keysIterator.toList.toString()}
 parent: ${parent.toString}"""
 
 
-case class ScalaClass(
-    environment: ScalaEnvironment,
-    symbol: ClassSymbol,
-    constr: DefDef,
-    body: List[Tree]) extends ScalaType
+class ScalaClass(
+      val environment: ScalaEnvironment,
+      val symbol: ClassSymbol,
+      val constr: ScalaConstructor)
+    extends ScalaType
 
 class ScalaObject(env: => ScalaEnvironment) extends ScalaValue:
   lazy val environment = env
 class ScalaLazyValue(valueDefinition: => ScalaValue)(using Context) extends ScalaTerm:
-  lazy val value = valueDefinition
+  lazy val value: ScalaValue = valueDefinition
 
-class ScalaFunctionObject(env: => ScalaEnvironment, method: ScalaMethod)(using Context)
-    extends ScalaObject(env):
-  override lazy val environment: ScalaEnvironment = env
+class ScalaFunctionObject(environment: ScalaEnvironment, method: ScalaMethod)(using Context)
+    extends ScalaObject(environment):
   val applySymbol = defn.Function0Class.getDecl(termName("apply")).get.asTerm
   environment.update(applySymbol, BuiltInMethod { arguments  =>
     method.apply(arguments)(using ctx)
@@ -121,9 +121,7 @@ class ScalaMethod(
     body: Tree,
     isConstructor: Boolean = false) extends ScalaApplicable:
   override def apply(arguments: List[ScalaTerm])(using Context): ScalaValue =
-    val callEnvironment =
-      if isConstructor then parent
-      else ScalaEnvironment(Some(parent))
+    val callEnvironment = ScalaEnvironment(Some(parent))
     callEnvironment.bindAll(parameters.zip(arguments))
     evaluate(callEnvironment)(body).value match
       case (result: ScalaApplicable) => result.apply(List.empty)
@@ -134,3 +132,10 @@ class BuiltInMethod[T <: ScalaValue]
     (underlying: List[ScalaTerm] => Context ?=> T) extends ScalaApplicable:
   override def apply(arguments: List[ScalaTerm])(using Context): T =
     underlying(arguments)
+
+class ScalaConstructor(underlying: ScalaEnvironment => List[ScalaTerm] => Context ?=> ScalaObject)
+    extends ScalaApplicable:
+  var objEnv = ScalaEnvironment(None)
+  def setObjEnv(env: ScalaEnvironment) = objEnv = env
+  override def apply(arguments: List[ScalaTerm])(using Context): ScalaObject =
+    underlying(objEnv)(arguments)

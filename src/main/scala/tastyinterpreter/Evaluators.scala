@@ -22,12 +22,13 @@ def evaluate(env: ScalaEnvironment)(tree: Tree)(using Context): ScalaBox[ScalaTe
     case (t: Block) => evaluateBlock(env)(t)
     case (t: Apply) => evaluateApply(env)(t)
     case ts @ Select(qualifier, t) =>
-      {evaluate(env)(qualifier).value match
-          case (q: ScalaObject) => q
-          case (q: ScalaLazyValue) if q.value.isInstanceOf[ScalaObject] =>
-            q.value.asInstanceOf[ScalaObject]
-          case q @ _ => throw TastyEvaluationError(s"don't know how to select in ${q}")
-      }.environment.lookup(ts.tpe.asInstanceOf[TermRef].symbol)
+      evaluate(env)(qualifier).value match
+        case (q: ScalaObject) => q
+        case (q: ScalaLazyValue) => q.value
+        case q @ _ => throw TastyEvaluationError(s"don't know how to select in ${q}")
+      TypeEvaluators.evaluate(env)(ts.tpe) match
+        case (st: ScalaTerm) => st
+        case _ => throw TastyEvaluationError("type of Select node must be ScalaTerm")
     case (t: Lambda) => evaluateLambda(env)(t)
     case (t: Ident) => evaluateIdent(env)(t)
     case Typed(t, _) => evaluate(env)(t)
@@ -39,30 +40,32 @@ def evaluate(env: ScalaEnvironment)(tree: Tree)(using Context): ScalaBox[ScalaTe
     case t @ _ => throw TastyEvaluationError(s"not implemented for ${t.toString}")
 
 def evaluateClassDef(env: ScalaEnvironment)(tree: ClassDef)(using Context): ScalaUnit =
-  env(tree.symbol) = ScalaClass(env, tree.symbol, tree.rhs.constr, tree.rhs.body)
+  def constr(objEnv: ScalaEnvironment)(arguments: List[ScalaTerm])(using Context): ScalaObject =
+    tree.rhs.constr.paramLists match
+      case Left(vds) :: Nil =>
+        // 1. bind arguments
+        vds.zip(arguments).foreach((vd, arg) =>
+          objEnv(tree.symbol.getDecl(vd.name).get.asTerm) = arg)
+        // 2. evaluate superclass constructor *in current env*
+        // (how?)
+        // 3. evaluate template body
+        tree.rhs.body.foreach(evaluate(objEnv))
+        objEnv.getThisObject
+      case _ => throw TastyEvaluationError("don't know how to init this")
+  val clsEnv = ScalaEnvironment(Some(env))
+  val clsConstr = ScalaConstructor(constr)
+  clsEnv(tree.rhs.constr.symbol) = clsConstr
+  env(tree.symbol) = ScalaClass(clsEnv, tree.symbol, clsConstr)
   ScalaUnit
 
 def evaluateNew(env: ScalaEnvironment)(tree: New)(using Context): ScalaObject =
-  TypeEvaluators.evaluate(env)(tree.tpe).value match
+  TypeEvaluators.evaluate(env)(tree.tpe) match
     case (cls: ScalaClass) =>
       lazy val (objEnv: ScalaEnvironment, obj: ScalaObject) =
         (ScalaEnvironment(Some(cls.environment), Some(obj)), ScalaObject(objEnv))
-      objEnv(cls.constr.symbol) = BuiltInMethod { arguments =>
-        cls.constr.paramLists match
-          case Left(vds) :: Nil =>
-            // 1. bind arguments
-            vds.zip(arguments).foreach((vd, arg) =>
-              objEnv(cls.symbol.getDecl(vd.name).get.asTerm) = arg)
-            // 2. evaluate superclass constructor *in current env*
-            // (how?)
-            // 3. evaluate template body
-            cls.body.foreach(evaluate(objEnv))
-            // 4. return newly instantiated object
-            obj
-          case _ => throw TastyEvaluationError("don't know how to init this")
-      }
-      // this object has <init> bound but nothing else!
+      cls.constr.setObjEnv(objEnv)
       obj
+    case _ => throw TastyEvaluationError("don't know how to init this")
 
 def evaluateThis(env: ScalaEnvironment)(t: This)(using Context): ScalaObject =
   env.getThisObject
