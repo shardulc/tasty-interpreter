@@ -4,7 +4,7 @@ class Bar(x: Int):
   class Baz:
     def add(y: Int) = x + y
 
-object Foo:
+object Foobar:
   def doit =
     val four = Bar(4)
     val baz = four.Baz()

@@ -30,8 +30,23 @@ class BasicSuite extends TastyInterpreterSuite:
     evaluateDeclarationsInPackage(globalEnv, basicPkg)
 
     List(
-      (Apply(makeSelectTree(basicPkg, "Foo", "doit"), List.empty)(NoSpan),
-        assertScalaEquals(otherbasic.Foo.doit)))
+      (Apply(makeSelectTree(basicPkg, "Foobar", "doit"), List.empty)(NoSpan),
+        assertScalaEquals(otherbasic.Foobar.doit)))
+      .map(evaluateAndCheck(globalEnv))
+  }
+
+  testWithCtx("closures top-level") { ctx ?=>
+    val globalEnv = globalEnvironment()
+    val basicPkg = makePackageName("testinputs", "basic")
+    evaluateDeclarationsInPackage(globalEnv, basicPkg)
+
+    List(
+      (makeSelectTree(basicPkg, "ClosuresTopLevel$package", "y"),
+        assertScalaEquals(basic.y)),
+      (makeSelectTree(basicPkg, "ClosuresTopLevel$package", "z"),
+        assertScalaEquals(basic.z)),
+      (makeSelectTree(basicPkg, "ClosuresTopLevel$package", "yy"),
+        assertScalaEquals(basic.yy)))
       .map(evaluateAndCheck(globalEnv))
   }
 
@@ -41,11 +56,11 @@ class BasicSuite extends TastyInterpreterSuite:
     evaluateDeclarationsInPackage(globalEnv, basicPkg)
 
     List(
-      (makeSelectTree(basicPkg, "Closures$package", "y"),
-        assertScalaEquals(basic.y)),
-      (makeSelectTree(basicPkg, "Closures$package", "z"),
-        assertScalaEquals(basic.z)),
-      (makeSelectTree(basicPkg, "Closures$package", "yy"),
-        assertScalaEquals(basic.yy)))
+      (makeSelectTree(basicPkg, "Closures", "y"),
+        assertScalaEquals(basic.Closures.y)),
+      (makeSelectTree(basicPkg, "Closures", "z"),
+        assertScalaEquals(basic.Closures.z)),
+      (makeSelectTree(basicPkg, "Closures", "yy"),
+        assertScalaEquals(basic.Closures.yy)))
       .map(evaluateAndCheck(globalEnv))
   }
