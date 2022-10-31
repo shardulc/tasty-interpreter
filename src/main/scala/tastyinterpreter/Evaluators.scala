@@ -22,13 +22,11 @@ def evaluate(env: ScalaEnvironment)(tree: Tree)(using Context): ScalaBox[ScalaTe
     case (t: Block) => evaluateBlock(env)(t)
     case (t: Apply) => evaluateApply(env)(t)
     case ts @ Select(qualifier, t) =>
-      evaluate(env)(qualifier).value match
+      val obj = evaluate(env)(qualifier).value match
         case (q: ScalaObject) => q
-        case (q: ScalaLazyValue) => q.value
+        case (q: ScalaLazyValue) => q.value.asInstanceOf[ScalaObject]
         case q @ _ => throw TastyEvaluationError(s"don't know how to select in ${q}")
-      TypeEvaluators.evaluate(env)(ts.tpe) match
-        case (st: ScalaTerm) => st
-        case _ => throw TastyEvaluationError("type of Select node must be ScalaTerm")
+      obj.environment.lookup(ts.tpe.asInstanceOf[TermRef].symbol)
     case (t: Lambda) => evaluateLambda(env)(t)
     case (t: Ident) => evaluateIdent(env)(t)
     case Typed(t, _) => evaluate(env)(t)
