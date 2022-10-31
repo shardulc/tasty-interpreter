@@ -2,12 +2,13 @@ package tastyinterpreter
 
 import scala.annotation.targetName
 import scala.collection.mutable
+import scala.language.implicitConversions
 
-import tastyquery.Types.Type
-import tastyquery.Contexts.Context
+import tastyquery.Contexts.*
 import tastyquery.Names.*
 import tastyquery.Symbols.*
 import tastyquery.Trees.*
+import tastyquery.Signatures.*
 
 
 /*
@@ -24,6 +25,8 @@ sealed ScalaEntity
    -- sealed ScalaApplicable
       -- ScalaMethod
       -- BuiltInMethod
+      -- ScalaConstructor
+   -- ScalaLazyValue
 -- sealed ScalaType
    -- ScalaClass
 
@@ -35,75 +38,71 @@ sealed trait ScalaTerm extends ScalaEntity
 sealed trait ScalaValue extends ScalaTerm
 sealed trait ScalaType extends ScalaEntity
 
+class ScalaBox[T](initValue: T):
+  var value = initValue
+  def set(other: T) = value = other
+
+implicit def box2value[T](box: ScalaBox[T]): T = box.value
+implicit def value2box[T](value: T): ScalaBox[T] = ScalaBox(value)
+
 class ScalaEnvironment(
     parent: Option[ScalaEnvironment],
-    termBindings: mutable.HashMap[TermSymbol, ScalaTerm] = mutable.HashMap.empty,
-    termNameBindings: mutable.HashMap[TermName, ScalaTerm] = mutable.HashMap.empty,
-    typeBindings: mutable.HashMap[TypeSymbol, ScalaType] = mutable.HashMap.empty,
-    typeNameBindings: mutable.HashMap[TypeName, ScalaType] = mutable.HashMap.empty):
+    thisObj: => Option[ScalaObject] = None,
+    termBindings: mutable.HashMap[TermSymbol, ScalaBox[ScalaTerm]] = mutable.HashMap.empty,
+    typeBindings: mutable.HashMap[TypeSymbol, ScalaBox[ScalaType]] = mutable.HashMap.empty):
 
-  // def apply(symbol: TermSymbol): ScalaTerm = termBindings(symbol)
-  // def apply(symbol: TypeSymbol): ScalaType = typeBindings(symbol)
+  private lazy val thisObject = thisObj
+  def getThisObject: ScalaObject = thisObj.getOrElse(parent.get.getThisObject)
 
   def update(symbol: TermSymbol, value: ScalaTerm): Unit =
     termBindings.update(symbol, value)
   def update(symbol: TypeSymbol, value: ScalaType): Unit =
     typeBindings.update(symbol, value)
-  def updateByName(symbol: TermName, value: ScalaTerm): Unit =
-    termNameBindings.update(symbol, value)
-  def updateByName(symbol: TypeName, value: ScalaType): Unit =
-    typeNameBindings.update(symbol, value)
 
-  def bindAll(symbolsAndValues: IterableOnce[(TermSymbol, ScalaTerm)]): Unit =
-    termBindings.addAll(symbolsAndValues)
+  def bindAll(symbolsAndValues: Iterable[(TermSymbol, ScalaTerm)]): Unit =
+    termBindings.addAll(symbolsAndValues.map((s, t) => (s, t)))
   @targetName("bindAllTypes")
-  def bindAll(symbolsAndValues: IterableOnce[(TypeSymbol, ScalaType)]): Unit =
-    typeBindings.addAll(symbolsAndValues)
+  def bindAll(symbolsAndValues: Iterable[(TypeSymbol, ScalaType)]): Unit =
+    typeBindings.addAll(symbolsAndValues.map((s, t) => (s, t)))
 
-  def lookup(symbol: TermSymbol): ScalaTerm =
-    termBindings.getOrElse(symbol,
-      termNameBindings.getOrElse(symbol.name, parent.get.lookup(symbol)))
-  def lookup(symbol: TypeSymbol): ScalaType =
-    typeBindings.getOrElse(symbol,
-      typeNameBindings.getOrElse(symbol.name, parent.get.lookup(symbol)))
-  def lookupByName(name: TermName)(using Context): ScalaTerm =
-    val nameBindings = termBindings.map((sym, v) => (sym.name, v)) ++ termNameBindings
-    nameBindings.getOrElse(name, parent.fold(throw TastyEvaluationError(name.toString))(_.lookupByName(name)))
+  def lookup(symbol: TermSymbol): ScalaBox[ScalaTerm] =
+    termBindings.getOrElse(symbol, parent.get.lookup(symbol))
+  def lookup(symbol: TypeSymbol): ScalaBox[ScalaType] =
+    typeBindings.getOrElse(symbol, parent.get.lookup(symbol))
 
   override def toString(): String =
-    s"""term bindings: ${termBindings.keysIterator.toList.toString()}
+    s"""term bindings: ${termBindings.keysIterator.toList.map(s => s.name.toString() + s.owner.toString + s.flags.toString() )}
 type bindings: ${typeBindings.keysIterator.toList.toString()}
 parent: ${parent.toString}"""
 
 
-case class ScalaClass(
-    environment: ScalaEnvironment,
-    symbol: ClassSymbol,
-    constr: DefDef,
-    body: List[Tree]) extends ScalaType
+class ScalaClass(
+      val environment: ScalaEnvironment,
+      val symbol: ClassSymbol,
+      val constr: ScalaConstructor)
+    extends ScalaType
 
-class ScalaObject(val environment: ScalaEnvironment) extends ScalaValue
-class ScalaLazyValue[T <: ScalaValue](environment: ScalaEnvironment, toBeValue: Block)(using Context) extends ScalaValue:
-  lazy val value = evaluateBlock(environment)(toBeValue).asInstanceOf[T]
-class ScalaLazyObject(environment: ScalaEnvironment, toBeValue: Block)(using Context)
-    extends ScalaLazyValue[ScalaObject](environment, toBeValue)
+class ScalaObject(env: => ScalaEnvironment) extends ScalaValue:
+  lazy val environment = env
+class ScalaLazyValue(valueDefinition: => ScalaValue)(using Context) extends ScalaTerm:
+  lazy val value: ScalaValue = valueDefinition
 
-class ScalaFunctionObject(override val environment: ScalaEnvironment, method: ScalaMethod)
+class ScalaFunctionObject(environment: ScalaEnvironment, method: ScalaMethod)(using Context)
     extends ScalaObject(environment):
-  environment.updateByName(termName("apply"), BuiltInMethod { (arguments, ctx) =>
+  val applySymbol = defn.Function0Class.getDecl(termName("apply")).get.asTerm
+  environment.update(applySymbol, BuiltInMethod { arguments  =>
     method.apply(arguments)(using ctx)
   })
 
 trait ScalaValueExtractor[T](val value: T)
 
-/*
- * This is a mockup of the built-in Int type. Eventually, we want to pass
- * the Scala library through the interpreter and use its definitions (in our
- * target language) rather than the metalanguage definitions here.
- */
-class ScalaInt(override val value: Int) extends ScalaObject(ScalaEnvironment(None))
+class ScalaInt(override val value: Int)(using Context) extends ScalaObject(ScalaEnvironment(None))
     with ScalaValueExtractor(value):
-  environment.updateByName(termName("+"), BuiltInMethod { (arguments, ctx) =>
+  val scalaIntName = defn.IntClass.fullName
+  val addSymbol = defn.IntClass.getDecl(
+    SignedName(termName("+"), Signature(List(ParamSig.Term(scalaIntName)), scalaIntName), termName("+")))
+    .get.asTerm
+  environment.update(addSymbol, BuiltInMethod { arguments =>
     arguments match
       case (a: ScalaInt) :: Nil => ScalaInt(a.value + this.value)
       case _ => throw TastyEvaluationError("wrong args for Int +")
@@ -112,30 +111,31 @@ class ScalaInt(override val value: Int) extends ScalaObject(ScalaEnvironment(Non
 object ScalaUnit extends ScalaObject(ScalaEnvironment(None))
 type ScalaUnit = ScalaUnit.type
 
+
 sealed trait ScalaApplicable extends ScalaTerm:
-  def apply(arguments: List[ScalaTerm])
-    (using Context): ScalaValue 
+  def apply(arguments: List[ScalaTerm])(using Context): ScalaValue 
 
 class ScalaMethod(
     parent: ScalaEnvironment,
     parameters: List[TermSymbol],
-    // returnType: ScalaType,
     body: Tree,
     isConstructor: Boolean = false) extends ScalaApplicable:
-  override def apply(arguments: List[ScalaTerm])
-      (using Context): ScalaValue =
-    val callEnvironment =
-      if isConstructor then parent
-      else ScalaEnvironment(Some(parent), mutable.HashMap.empty)
+  override def apply(arguments: List[ScalaTerm])(using Context): ScalaValue =
+    val callEnvironment = ScalaEnvironment(Some(parent))
     callEnvironment.bindAll(parameters.zip(arguments))
-    evaluate(callEnvironment)(body) match
+    evaluate(callEnvironment)(body).value match
       case (result: ScalaApplicable) => result.apply(List.empty)
       case (result: ScalaValue) => result
-
-      
+      case (result: ScalaLazyValue) => result.value
 
 class BuiltInMethod[T <: ScalaValue]
-    (underlying: Function2[List[ScalaTerm], Context, T]) extends ScalaApplicable:
-  override def apply(arguments: List[ScalaTerm])
-      (using ctx: Context): T =
-    underlying(arguments, ctx)
+    (underlying: List[ScalaTerm] => Context ?=> T) extends ScalaApplicable:
+  override def apply(arguments: List[ScalaTerm])(using Context): T =
+    underlying(arguments)
+
+class ScalaConstructor(underlying: ScalaEnvironment => List[ScalaTerm] => Context ?=> ScalaObject)
+    extends ScalaApplicable:
+  var objEnv = ScalaEnvironment(None)
+  def setObjEnv(env: ScalaEnvironment) = objEnv = env
+  override def apply(arguments: List[ScalaTerm])(using Context): ScalaObject =
+    underlying(objEnv)(arguments)

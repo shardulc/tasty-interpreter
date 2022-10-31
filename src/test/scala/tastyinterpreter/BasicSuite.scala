@@ -4,21 +4,48 @@ import tastyquery.Contexts.Context
 import tastyquery.Names.*
 import tastyquery.Trees.*
 import tastyquery.Spans.NoSpan
-import tastyquery.Types.NoType
+import tastyquery.Types.*
 
 import testinputs.basic
+import testinputs.otherbasic
 
 class BasicSuite extends TastyInterpreterSuite:
 
-  testWithCtx("classes and objects") { ctx =>
-    given Context = ctx
+  testWithCtx("classes and objects") {
     val globalEnv = globalEnvironment()
-    evaluateDeclarationsInPackage(globalEnv, makePackageName("testinputs", "basic"))
+    val basicPkg = makePackageName("testinputs", "basic")
+    evaluateDeclarationsInPackage(globalEnv, basicPkg)
+
     List(
-      (Apply(makeSelectTree("Foo", "doit"), List.empty)(NoSpan),
+      (Apply(makeSelectTree(basicPkg, "Foo", "doit"), List.empty)(NoSpan),
         assertScalaEquals(basic.Foo.doit)),
-      (Apply(makeSelectTree("Foo", "doitagain"), List.empty)(NoSpan),
+      (Apply(makeSelectTree(basicPkg, "Foo", "doitagain"), List.empty)(NoSpan),
         assertScalaEquals(basic.Foo.doitagain)))
       .map(evaluateAndCheck(globalEnv))
   }
 
+  testWithCtx("inner class") {
+    val globalEnv = globalEnvironment()
+    val basicPkg = makePackageName("testinputs", "otherbasic")
+    evaluateDeclarationsInPackage(globalEnv, basicPkg)
+
+    List(
+      (Apply(makeSelectTree(basicPkg, "Foo", "doit"), List.empty)(NoSpan),
+        assertScalaEquals(otherbasic.Foo.doit)))
+      .map(evaluateAndCheck(globalEnv))
+  }
+
+  testWithCtx("closures") { ctx ?=>
+    val globalEnv = globalEnvironment()
+    val basicPkg = makePackageName("testinputs", "basic")
+    evaluateDeclarationsInPackage(globalEnv, basicPkg)
+
+    List(
+      (makeSelectTree(basicPkg, "Closures$package", "y"),
+        assertScalaEquals(basic.y)),
+      (makeSelectTree(basicPkg, "Closures$package", "z"),
+        assertScalaEquals(basic.z)),
+      (makeSelectTree(basicPkg, "Closures$package", "yy"),
+        assertScalaEquals(basic.yy)))
+      .map(evaluateAndCheck(globalEnv))
+  }

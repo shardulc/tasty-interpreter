@@ -1,76 +1,88 @@
 package tastyinterpreter
 
-import tastyquery.Trees.*
 import scala.collection.mutable.HashMap
-import scala.util.{ Try, Success, Failure }
-import tastyquery.Contexts.Context
-import tastyquery.Names.*
-import tastyquery.TypeTrees.TypeIdent
-import tastyquery.Spans.NoSpan
-import tastyquery.Spans.Span
+
+import tastyquery.Trees.*
 import tastyquery.Types.*
+import tastyquery.Contexts.*
+import tastyquery.Names.*
+import tastyquery.Spans.NoSpan
 import tastyquery.Constants.Constant
+import tastyquery.Flags
 
 
 class TastyEvaluationError(m: String) extends RuntimeException(m)
 
-case class InterpreterLiteral(term: ScalaTerm) extends Tree(NoSpan):
-  override def withSpan(span: Span): Tree = InterpreterLiteral(term)
-  override protected def calculateType(using Context): Type = ???
-
-
-def evaluate(env: ScalaEnvironment)(tree: Tree)(using Context): ScalaTerm =
-  tree match
+def evaluate(env: ScalaEnvironment)(tree: Tree)(using Context): ScalaBox[ScalaTerm] =
+ tree match
     case (t: ClassDef) => evaluateClassDef(env)(t)
     case (t: New) => evaluateNew(env)(t)
     case (t: ValDef) => evaluateValDef(env)(t)
     case (t: DefDef) => evaluateDefDef(env)(t)
     case (t: Block) => evaluateBlock(env)(t)
     case (t: Apply) => evaluateApply(env)(t)
-    case Select(qualifier, t) =>
-      evaluate(env)(qualifier) match
-        case (q: ScalaLazyObject) =>
-          evaluateName(q.value.environment)(t)
-        case (q: ScalaObject) => evaluateName(q.environment)(t)
-        // case (q: ScalaClass) => evaluateName(q.environment)(t)
+    case ts @ Select(qualifier, t) =>
+      val obj = evaluate(env)(qualifier).value match
+        case (q: ScalaObject) => q
+        case (q: ScalaLazyValue) => q.value.asInstanceOf[ScalaObject]
         case q @ _ => throw TastyEvaluationError(s"don't know how to select in ${q}")
+      obj.environment.lookup(ts.tpe.asInstanceOf[TermRef].symbol)
     case (t: Lambda) => evaluateLambda(env)(t)
     case (t: Ident) => evaluateIdent(env)(t)
-    // case (t: Assign) => evaluateAssign(env)(t)
     case Typed(t, _) => evaluate(env)(t)
     case EmptyTree => ScalaUnit
-    case InterpreterLiteral(t) => t
     case Literal(Constant(t: Int)) => ScalaInt(t)
     case Literal(Constant(_: Unit)) => ScalaUnit
+    case (t: This) => evaluateThis(env)(t)
+    case (t: Assign) => evaluateAssign(env)(t)
     case t @ _ => throw TastyEvaluationError(s"not implemented for ${t.toString}")
 
 def evaluateClassDef(env: ScalaEnvironment)(tree: ClassDef)(using Context): ScalaUnit =
-  env(tree.symbol) = ScalaClass(env, tree.symbol, tree.rhs.constr, tree.rhs.body)
+  def constr(objEnv: ScalaEnvironment)(arguments: List[ScalaTerm])(using Context): ScalaObject =
+    tree.rhs.constr.paramLists match
+      case Left(vds) :: Nil =>
+        // 1. bind arguments
+        vds.zip(arguments).foreach((vd, arg) =>
+          objEnv(tree.symbol.getDecl(vd.name).get.asTerm) = arg)
+        // 2. evaluate superclass constructor *in current env*
+        // (how?)
+        // 3. evaluate template body
+        tree.rhs.body.foreach(evaluate(objEnv))
+        objEnv.getThisObject
+      case _ => throw TastyEvaluationError("don't know how to init this")
+  val clsEnv = ScalaEnvironment(Some(env))
+  val clsConstr = ScalaConstructor(constr)
+  clsEnv(tree.rhs.constr.symbol) = clsConstr
+  env(tree.symbol) = ScalaClass(clsEnv, tree.symbol, clsConstr)
   ScalaUnit
 
 def evaluateNew(env: ScalaEnvironment)(tree: New)(using Context): ScalaObject =
-  env.lookup(tree.tpe.asInstanceOf[TypeRef].symbol) match
+  TypeEvaluators.evaluate(env)(tree.tpe) match
     case (cls: ScalaClass) =>
-      val objEnv = ScalaEnvironment(Some(cls.environment))
-      val obj = ScalaObject(objEnv)
-      val constructor = cls.constr.copy(
-        rhs = InterpreterLiteral(
-          ScalaLazyObject(
-            objEnv,
-            Block(cls.body, InterpreterLiteral(obj))(NoSpan)
-          )
-        ))(NoSpan)
-      evaluateDefDef(objEnv)(constructor, isConstructor = true)
+      lazy val (objEnv: ScalaEnvironment, obj: ScalaObject) =
+        (ScalaEnvironment(Some(cls.environment), Some(obj)), ScalaObject(objEnv))
+      cls.constr.setObjEnv(objEnv)
       obj
+    case _ => throw TastyEvaluationError("don't know how to init this")
+
+def evaluateThis(env: ScalaEnvironment)(t: This)(using Context): ScalaObject =
+  env.getThisObject
 
 def evaluateValDef(env: ScalaEnvironment)(tree: ValDef)(using Context): ScalaUnit =
   // condition is true for fields referenced in templates
   if tree.rhs == EmptyTree then ScalaUnit else {
-    val evaledRhs = evaluate(env)(tree.rhs) match
+    def evaledRhs = evaluate(env)(tree.rhs).value match
       case (result: ScalaApplicable) => result.apply(List.empty)
       case (result: ScalaValue) => result
-    env(tree.symbol) = evaledRhs
+      case (result: ScalaLazyValue) => result.value
+    env(tree.symbol) =
+      if tree.symbol.is(Flags.Lazy) then ScalaLazyValue(evaledRhs)
+      else evaledRhs
     ScalaUnit}
+
+def evaluateAssign(env: ScalaEnvironment)(tree: Assign)(using Context): ScalaUnit =
+  evaluate(env)(tree.lhs).set(evaluate(env)(tree.rhs))
+  ScalaUnit
 
 def evaluateDefDef(env: ScalaEnvironment)(tree: DefDef, isConstructor: Boolean = false)
     (using Context): ScalaUnit =
@@ -88,18 +100,13 @@ def evaluateBlock(env: ScalaEnvironment)(tree: Block)(using Context): ScalaTerm 
 
 def evaluateApply(env: ScalaEnvironment)(tree: Apply)(using Context): ScalaValue =
   // ignore possibility of call-by-name
-  evaluate(env)(tree.fun) match
+  evaluate(env)(tree.fun).value match
     case (f: ScalaApplicable) => f.apply(tree.args.map(evaluate(env)))
     case f @ _ => throw TastyEvaluationError(s"can't apply ${f}")
 
-def evaluateLambda(env: ScalaEnvironment)(tree: Lambda)(using Context): ScalaFunctionObject =
-  val method = evaluate(env)(tree.meth).asInstanceOf[ScalaMethod]
+def evaluateLambda(env: ScalaEnvironment)(tree: Lambda)(using c: Context): ScalaFunctionObject =
+  val method = evaluate(env)(tree.meth).value.asInstanceOf[ScalaMethod]
   ScalaFunctionObject(ScalaEnvironment(Some(env)), method)
 
-def evaluateName(env: ScalaEnvironment)(name: TermName)(using Context): ScalaTerm =
-  name match
-    case SignedName(underlying, _, _) => env.lookupByName(underlying)
-    case _ => env.lookupByName(name)
-
-def evaluateIdent(env: ScalaEnvironment)(tree: Ident)(using Context): ScalaTerm =
-  evaluateName(env)(tree.name)
+def evaluateIdent(env: ScalaEnvironment)(tree: Ident)(using Context): ScalaBox[ScalaTerm] =
+  env.lookup(tree.tpe.asInstanceOf[TermRef].symbol)

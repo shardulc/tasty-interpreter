@@ -12,7 +12,7 @@ import tastyquery.nodejs.ClasspathLoaders
 import tastyquery.Names.*
 import tastyquery.Trees.*
 import tastyquery.Spans.NoSpan
-import tastyquery.Types.NoType
+import tastyquery.Types.*
 
 import tastyinterpreter.generated.TestClasspaths
 
@@ -50,9 +50,9 @@ class TastyInterpreterSuite extends FunSuite:
       (using Context, Location) =
     check(evaluate(environment)(tree))
 
-  def testWithCtx(testName: String)(testBody: Context => Any)
-      (using Location)=
-    test(testName) { ctx().map { ctx => testBody(ctx) } }
+  def testWithCtx(testName: String)(testBody: Context ?=> Any)
+      (using Location) =
+    test(testName) { ctx().map { ctx => testBody(using ctx) } }
 
   def assertScalaEquals[T](expected: => T)(result: ScalaTerm) =
     assert(clue(result.asInstanceOf[ScalaValueExtractor[T]].value) == expected)
@@ -60,6 +60,9 @@ class TastyInterpreterSuite extends FunSuite:
 
   def makePackageName(names: String*) = FullyQualifiedName(names.map(termName).toList)
 
-  def makeSelectTree(names: String*) =
-    names.tail.foldLeft[Tree](TermRefTree(termName(names.head), NoType)(NoSpan))
-      ((tree, name) => Select(tree, termName(name))(NoSpan))
+  def makeSelectTree(packageName: FullyQualifiedName, objectName: String, methodName: String)
+      (using c: Context) =
+    val objectSymbol = c.findPackageFromRoot(packageName).getDecl(termName(objectName)).get.asTerm
+    val objectType = TermRef(PackageRef(packageName), objectSymbol)
+    val objectTree = TermRefTree(termName(objectName), objectType)(NoSpan)
+    Select(objectTree, termName(methodName))(NoSpan)
