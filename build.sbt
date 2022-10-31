@@ -4,7 +4,8 @@ val rtJarOpt = taskKey[Option[String]]("Path to rt.jar if it exists")
 val javalibEntry = taskKey[String]("Path to rt.jar or \"jrt:/\"")
 
 lazy val commonSettings = Seq(
-  scalaVersion := "3.1.3"
+  scalaVersion := "3.1.3",
+  Global / onChangedBuildSource := ReloadOnSourceChanges
 )
 
 lazy val root = (project in file("."))
@@ -17,7 +18,7 @@ lazy val root = (project in file("."))
     // this is locally published from LAMP/scala-js/tasty-query
     // libraryDependencies += "tasty-query" %%% "tasty-query" % "0.1-SNAPSHOT"
       // from "file://" + baseDirectory.value.getPath() + "/lib/tasty-query_sjs1_3.jar",
-    libraryDependencies += "ch.epfl.scala" %%% "tasty-query" % "0.1.2",
+    libraryDependencies += "ch.epfl.scala" %%% "tasty-query" % "0.2.0",
     libraryDependencies += "org.scalameta" %%% "munit" % "0.7.29" % Test,
 
     Test / sourceGenerators += Def.task {
