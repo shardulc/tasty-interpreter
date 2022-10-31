@@ -84,14 +84,14 @@ def evaluateAssign(env: ScalaEnvironment)(tree: Assign)(using Context): ScalaUni
   evaluate(env)(tree.lhs).set(evaluate(env)(tree.rhs))
   ScalaUnit
 
-def evaluateDefDef(env: ScalaEnvironment)(tree: DefDef, isConstructor: Boolean = false)
+def evaluateDefDef(env: ScalaEnvironment)(tree: DefDef)
     (using Context): ScalaUnit =
   if tree.name != SimpleName("writeReplace") then
     // assume only one, val params clause for now
     val valParams: List[ValDef] = tree.paramLists match
       case Left(p) :: _ => p
       case _ => List.empty
-    env(tree.symbol) = ScalaMethod(env, valParams.map(_.symbol), tree.rhs, isConstructor)
+    env(tree.symbol) = ScalaMethod(env, valParams.map(_.symbol), tree.rhs)
   ScalaUnit
 
 def evaluateBlock(env: ScalaEnvironment)(tree: Block)(using Context): ScalaTerm =

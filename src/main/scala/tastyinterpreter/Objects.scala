@@ -118,8 +118,7 @@ sealed trait ScalaApplicable extends ScalaTerm:
 class ScalaMethod(
     parent: ScalaEnvironment,
     parameters: List[TermSymbol],
-    body: Tree,
-    isConstructor: Boolean = false) extends ScalaApplicable:
+    body: Tree) extends ScalaApplicable:
   override def apply(arguments: List[ScalaTerm])(using Context): ScalaValue =
     val callEnvironment = ScalaEnvironment(Some(parent))
     callEnvironment.bindAll(parameters.zip(arguments))
