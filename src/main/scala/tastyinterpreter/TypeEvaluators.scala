@@ -7,8 +7,8 @@ object TypeEvaluators:
 
   def evaluate(env: ScalaEnvironment)(tpe: Type)(using Context): ScalaEntity =
     tpe match
-      case (t: TermRef) => evaluatePrefix(env)(t.prefix).lookup(t.symbol)
-      case (t: TypeRef) => evaluatePrefix(env)(t.prefix).lookup(t.symbol)
+      case (t: TermRef) => evaluatePrefix(env)(t.prefix).lookup(t.symbol).value
+      case (t: TypeRef) => evaluatePrefix(env)(t.prefix).lookup(t.symbol).value
 
   def evaluatePrefix(env: ScalaEnvironment)(tpe: Type)(using Context): ScalaEnvironment =
     tpe match

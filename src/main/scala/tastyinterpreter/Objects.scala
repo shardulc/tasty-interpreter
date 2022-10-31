@@ -34,16 +34,15 @@ sealed ScalaEntity
 
 
 sealed trait ScalaEntity
-sealed trait ScalaTerm extends ScalaEntity
-sealed trait ScalaValue extends ScalaTerm
+sealed trait ScalaTerm extends ScalaEntity:
+  def forceValue()(using Context): ScalaValue
+sealed trait ScalaValue extends ScalaTerm:
+  override def forceValue()(using Context): ScalaValue = this
 sealed trait ScalaType extends ScalaEntity
 
 class ScalaBox[T](initValue: T):
   var value = initValue
   def set(other: T) = value = other
-
-implicit def box2value[T](box: ScalaBox[T]): T = box.value
-implicit def value2box[T](value: T): ScalaBox[T] = ScalaBox(value)
 
 class ScalaEnvironment(
     parent: Option[ScalaEnvironment],
@@ -55,15 +54,15 @@ class ScalaEnvironment(
   def getThisObject: ScalaObject = thisObj.getOrElse(parent.get.getThisObject)
 
   def update(symbol: TermSymbol, value: ScalaTerm): Unit =
-    termBindings.update(symbol, value)
+    termBindings.update(symbol, ScalaBox(value))
   def update(symbol: TypeSymbol, value: ScalaType): Unit =
-    typeBindings.update(symbol, value)
+    typeBindings.update(symbol, ScalaBox(value))
 
   def bindAll(symbolsAndValues: Iterable[(TermSymbol, ScalaTerm)]): Unit =
-    termBindings.addAll(symbolsAndValues.map((s, t) => (s, t)))
+    termBindings.addAll(symbolsAndValues.map((s, t) => (s, ScalaBox(t))))
   @targetName("bindAllTypes")
   def bindAll(symbolsAndValues: Iterable[(TypeSymbol, ScalaType)]): Unit =
-    typeBindings.addAll(symbolsAndValues.map((s, t) => (s, t)))
+    typeBindings.addAll(symbolsAndValues.map((s, t) => (s, ScalaBox(t))))
 
   def lookup(symbol: TermSymbol): ScalaBox[ScalaTerm] =
     termBindings.getOrElse(symbol, parent.get.lookup(symbol))
@@ -86,6 +85,7 @@ class ScalaObject(env: => ScalaEnvironment) extends ScalaValue:
   lazy val environment = env
 class ScalaLazyValue(valueDefinition: => ScalaValue)(using Context) extends ScalaTerm:
   lazy val value: ScalaValue = valueDefinition
+  override def forceValue()(using Context): ScalaValue = value
 
 class ScalaFunctionObject(environment: ScalaEnvironment, method: ScalaMethod)(using Context)
     extends ScalaObject(environment):
@@ -113,7 +113,8 @@ type ScalaUnit = ScalaUnit.type
 
 
 sealed trait ScalaApplicable extends ScalaTerm:
-  def apply(arguments: List[ScalaTerm])(using Context): ScalaValue 
+  def apply(arguments: List[ScalaTerm])(using Context): ScalaValue
+  override def forceValue()(using Context): ScalaValue = apply(List.empty)
 
 class ScalaMethod(
     parent: ScalaEnvironment,
@@ -122,10 +123,7 @@ class ScalaMethod(
   override def apply(arguments: List[ScalaTerm])(using Context): ScalaValue =
     val callEnvironment = ScalaEnvironment(Some(parent))
     callEnvironment.bindAll(parameters.zip(arguments))
-    evaluate(callEnvironment)(body).value match
-      case (result: ScalaApplicable) => result.apply(List.empty)
-      case (result: ScalaValue) => result
-      case (result: ScalaLazyValue) => result.value
+    evaluate(callEnvironment)(body)
 
 class BuiltInMethod[T <: ScalaValue]
     (underlying: List[ScalaTerm] => Context ?=> T) extends ScalaApplicable:
