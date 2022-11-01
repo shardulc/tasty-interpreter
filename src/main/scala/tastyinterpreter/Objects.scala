@@ -123,7 +123,7 @@ class ScalaMethod(
   override def apply(arguments: List[ScalaTerm])(using Context): ScalaValue =
     val callEnvironment = ScalaEnvironment(Some(parent))
     callEnvironment.bindAll(parameters.zip(arguments))
-    evaluate(callEnvironment)(body)
+    Evaluators.evaluate(callEnvironment)(body)
 
 class BuiltInMethod[T <: ScalaValue]
     (underlying: List[ScalaTerm] => Context ?=> T) extends ScalaApplicable:

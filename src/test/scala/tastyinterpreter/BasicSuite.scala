@@ -11,56 +11,72 @@ import testinputs.otherbasic
 
 class BasicSuite extends TastyInterpreterSuite:
 
-  testWithCtx("classes and objects") {
-    val globalEnv = globalEnvironment()
+  testWithInterpreter("classes and objects") { interpreter =>
     val basicPkg = makePackageName("testinputs", "basic")
-    evaluateDeclarationsInPackage(globalEnv, basicPkg)
+    interpreter.evaluateDeclarationsInPackage(basicPkg)
+    given Context = interpreter.ctx
 
-    List(
-      (Apply(makeSelectTree(basicPkg, "Foo", "doit"), List.empty)(NoSpan),
-        assertScalaEquals(basic.Foo.doit)),
-      (Apply(makeSelectTree(basicPkg, "Foo", "doitagain"), List.empty)(NoSpan),
-        assertScalaEquals(basic.Foo.doitagain)))
-      .map(evaluateAndCheck(globalEnv))
+    assertInterpretedEquals(
+      interpreter.evaluate(Apply(makeSelectTree(basicPkg, "Foo", "doit"), List.empty)(NoSpan)),
+      basic.Foo.doit,
+      5)
+
+    assertInterpretedEquals(
+      interpreter.evaluate(Apply(makeSelectTree(basicPkg, "Foo", "doitagain"), List.empty)(NoSpan)),
+      basic.Foo.doitagain,
+      6)
   }
 
-  testWithCtx("inner class") {
-    val globalEnv = globalEnvironment()
+  testWithInterpreter("inner class") { interpreter =>
     val basicPkg = makePackageName("testinputs", "otherbasic")
-    evaluateDeclarationsInPackage(globalEnv, basicPkg)
+    interpreter.evaluateDeclarationsInPackage(basicPkg)
+    given Context = interpreter.ctx
 
-    List(
-      (Apply(makeSelectTree(basicPkg, "Foobar", "doit"), List.empty)(NoSpan),
-        assertScalaEquals(otherbasic.Foobar.doit)))
-      .map(evaluateAndCheck(globalEnv))
+    assertInterpretedEquals(
+      interpreter.evaluate(Apply(makeSelectTree(basicPkg, "Foobar", "doit"), List.empty)(NoSpan)),
+      otherbasic.Foobar.doit,
+      7)
   }
 
-  testWithCtx("closures top-level") { ctx ?=>
-    val globalEnv = globalEnvironment()
-    val basicPkg = makePackageName("testinputs", "basic")
-    evaluateDeclarationsInPackage(globalEnv, basicPkg)
 
-    List(
-      (makeSelectTree(basicPkg, "ClosuresTopLevel$package", "y"),
-        assertScalaEquals(basic.y)),
-      (makeSelectTree(basicPkg, "ClosuresTopLevel$package", "z"),
-        assertScalaEquals(basic.z)),
-      (makeSelectTree(basicPkg, "ClosuresTopLevel$package", "yy"),
-        assertScalaEquals(basic.yy)))
-      .map(evaluateAndCheck(globalEnv))
+  testWithInterpreter("closures top-level") { interpreter =>
+    val basicPkg = makePackageName("testinputs", "basic")
+    interpreter.evaluateDeclarationsInPackage(basicPkg)
+    given Context = interpreter.ctx
+
+    assertInterpretedEquals(
+      interpreter.evaluate(makeSelectTree(basicPkg, "ClosuresTopLevel$package", "y")),
+      basic.y,
+      1)
+
+    assertInterpretedEquals(
+      interpreter.evaluate(makeSelectTree(basicPkg, "ClosuresTopLevel$package", "z")),
+      basic.z,
+      2)
+
+    assertInterpretedEquals(
+      interpreter.evaluate(makeSelectTree(basicPkg, "ClosuresTopLevel$package", "yy")),
+      basic.yy,
+      1)
   }
 
-  testWithCtx("closures") { ctx ?=>
-    val globalEnv = globalEnvironment()
+  testWithInterpreter("closures") { interpreter =>
     val basicPkg = makePackageName("testinputs", "basic")
-    evaluateDeclarationsInPackage(globalEnv, basicPkg)
+    interpreter.evaluateDeclarationsInPackage(basicPkg)
+    given Context = interpreter.ctx
 
-    List(
-      (makeSelectTree(basicPkg, "Closures", "y"),
-        assertScalaEquals(basic.Closures.y)),
-      (makeSelectTree(basicPkg, "Closures", "z"),
-        assertScalaEquals(basic.Closures.z)),
-      (makeSelectTree(basicPkg, "Closures", "yy"),
-        assertScalaEquals(basic.Closures.yy)))
-      .map(evaluateAndCheck(globalEnv))
+    assertInterpretedEquals(
+      interpreter.evaluate(makeSelectTree(basicPkg, "Closures", "y")),
+      basic.Closures.y,
+      1)
+
+    assertInterpretedEquals(
+      interpreter.evaluate(makeSelectTree(basicPkg, "Closures", "z")),
+      basic.Closures.z,
+      2)
+
+    assertInterpretedEquals(
+      interpreter.evaluate(makeSelectTree(basicPkg, "Closures", "yy")),
+      basic.Closures.yy,
+      1)
   }

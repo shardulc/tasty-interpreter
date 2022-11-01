@@ -6,6 +6,7 @@ import scala.concurrent.Future
 import munit.FunSuite
 import munit.Location
 
+import tastyquery.Classpaths.Classpath
 import tastyquery.Contexts.Context
 import tastyquery.Contexts
 import tastyquery.nodejs.ClasspathLoaders
@@ -22,41 +23,22 @@ class TastyInterpreterSuite extends FunSuite:
     "target/scala-3.1.3/test-classes/"
   )
 
-  val ctx = new Fixture[Future[Context]]("context") {
-    private var ctx: Future[Context] = null
-    def apply() = ctx
+  val clspth = new Fixture[Future[Classpath]]("classpath") {
+    private var clspth: Future[Classpath] = null
+    def apply() = clspth
     override def beforeAll(): Unit =
-      ctx = ClasspathLoaders.read(classpaths).map(Contexts.init(_))
+      clspth = ClasspathLoaders.read(classpaths)
   }
 
-  val globalEnvironment = new Fixture[ScalaEnvironment]("global environment") {
-    private var env: ScalaEnvironment = null
-    def apply() = env
-    override def beforeEach(context: BeforeEach): Unit =
-      env = ScalaEnvironment(None)
-  }
+  override def munitFixtures = List(clspth)
 
-  override def munitFixtures = List(ctx, globalEnvironment)
 
-  def evaluateDeclarationsInPackage(
-      environment: ScalaEnvironment = ScalaEnvironment(None),
-      packageName: FullyQualifiedName)(using ctx: Context, l: Location) =
-    ctx.findPackageFromRoot(packageName).asPackage.declarations
-      // asInstanceOf is safe because all DefTree subclasses are Tree subclasses
-      .map(_.tree.get.asInstanceOf[Tree])
-      .foreach(evaluate(environment))
+  def testWithInterpreter(testName: String)(testBody: Interpreter => Any) =
+    test(testName) { clspth().map { clspth => testBody(Interpreter(using Contexts.init(clspth))) } }
 
-  def evaluateAndCheck(environment: ScalaEnvironment)(tree: Tree, check: ScalaTerm => Unit)
-      (using Context, Location) =
-    check(evaluate(environment)(tree))
-
-  def testWithCtx(testName: String)(testBody: Context ?=> Any)
-      (using Location) =
-    test(testName) { ctx().map { ctx => testBody(using ctx) } }
-
-  def assertScalaEquals[T](expected: => T)(result: ScalaTerm) =
-    assert(clue(result.asInstanceOf[ScalaValueExtractor[T]].value) == expected)
-
+  def assertInterpretedEquals[T](result: ScalaTerm, expectedScala: T, expectedManual: T) =
+    assert(clue(result.asInstanceOf[ScalaValueExtractor[T]].value) == expectedScala)
+    assert(clue(result.asInstanceOf[ScalaValueExtractor[T]].value) == expectedManual)
 
   def makePackageName(names: String*) = FullyQualifiedName(names.map(termName).toList)
 
