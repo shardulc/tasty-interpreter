@@ -36,7 +36,7 @@ class TastyInterpreterSuite extends FunSuite:
   def testWithInterpreter(testName: String)(testBody: Interpreter => Any) =
     test(testName) { clspth().map { clspth => testBody(Interpreter(using Contexts.init(clspth))) } }
 
-  def assertInterpretedEquals[T](result: ScalaTerm, expectedScala: T, expectedManual: T) =
+  def assertInterpretedEquals[T](result: ScalaTerm, expectedScala: T, expectedManual: T)(using Location) =
     assert(clue(result.asInstanceOf[ScalaValueExtractor[T]].value) == expectedScala)
     assert(clue(result.asInstanceOf[ScalaValueExtractor[T]].value) == expectedManual)
 
