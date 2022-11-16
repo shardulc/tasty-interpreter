@@ -22,10 +22,12 @@ sealed ScalaEntity
          -- ScalaFunctionObject
          -- ScalaInt (with ScalaValueExtractor)
          -- ScalaUnit
+         -- ScalaUninitializedObject
    -- sealed ScalaApplicable
       -- ScalaMethod
       -- BuiltInMethod
-      -- ScalaConstructor
+   -- ScalaClassMethod
+   -- ScalaClassConstructor
    -- ScalaLazyValue
 -- sealed ScalaType
    -- ScalaClass
@@ -40,18 +42,14 @@ sealed trait ScalaValue extends ScalaTerm:
   override def forceValue()(using Context): ScalaValue = this
 sealed trait ScalaType extends ScalaEntity
 
-class ScalaBox[T](initValue: T):
-  var value = initValue
-  def set(other: T) = value = other
+case class ScalaBox[T](var value: T)
 
 class ScalaEnvironment(
     parent: Option[ScalaEnvironment],
-    thisObj: => Option[ScalaObject] = None,
     termBindings: mutable.HashMap[TermSymbol, ScalaBox[ScalaTerm]] = mutable.HashMap.empty,
     typeBindings: mutable.HashMap[TypeSymbol, ScalaBox[ScalaType]] = mutable.HashMap.empty):
 
-  private lazy val thisObject = thisObj
-  def getThisObject: ScalaObject = thisObj.getOrElse(parent.get.getThisObject)
+  var thisObject: Option[ScalaObject] = parent.flatMap(_.thisObject)
 
   def update(symbol: TermSymbol, value: ScalaTerm): Unit =
     termBindings.update(symbol, ScalaBox(value))
@@ -69,6 +67,9 @@ class ScalaEnvironment(
   def lookup(symbol: TypeSymbol): ScalaBox[ScalaType] =
     typeBindings.getOrElse(symbol, parent.get.lookup(symbol))
 
+  def lookupHere(symbol: TermSymbol): Option[ScalaBox[ScalaTerm]] =
+    termBindings.get(symbol)
+
   override def toString(): String =
     s"""term bindings: ${termBindings.keysIterator.toList.map(s => s.name.toString() + s.owner.toString + s.flags.toString() )}
 type bindings: ${typeBindings.keysIterator.toList.toString()}
@@ -78,17 +79,19 @@ parent: ${parent.toString}"""
 class ScalaClass(
       val environment: ScalaEnvironment,
       val symbol: ClassSymbol,
-      val constr: ScalaConstructor)
+      val constructor: ScalaClassConstructor)
     extends ScalaType
 
-class ScalaObject(env: => ScalaEnvironment) extends ScalaValue:
-  lazy val environment = env
+class ScalaObject(val environment: ScalaEnvironment, val cls: ClassSymbol) extends ScalaValue
+class ScalaUninitializedObject(environment: ScalaEnvironment, cls: ClassSymbol)
+  extends ScalaObject(environment, cls)
+
 class ScalaLazyValue(valueDefinition: => ScalaValue)(using Context) extends ScalaTerm:
   lazy val value: ScalaValue = valueDefinition
   override def forceValue()(using Context): ScalaValue = value
 
 class ScalaFunctionObject(environment: ScalaEnvironment, method: ScalaMethod)(using Context)
-    extends ScalaObject(environment):
+    extends ScalaObject(environment, defn.Function0Class):
   val applySymbol = defn.Function0Class.getDecl(termName("apply")).get.asTerm
   environment.update(applySymbol, BuiltInMethod { arguments  =>
     method.apply(arguments)(using ctx)
@@ -96,10 +99,11 @@ class ScalaFunctionObject(environment: ScalaEnvironment, method: ScalaMethod)(us
 
 trait ScalaValueExtractor[T](val value: T)
 
-class ScalaInt(override val value: Int)(using Context) extends ScalaObject(ScalaEnvironment(None))
+class ScalaInt(override val value: Int)(using Context)
+    extends ScalaObject(ScalaEnvironment(None), defn.IntClass)
     with ScalaValueExtractor(value):
-  val scalaIntName = defn.IntClass.fullName
-  val addSymbol = defn.IntClass.getDecl(
+  val scalaIntName = cls.fullName
+  val addSymbol = cls.getDecl(
     SignedName(termName("+"), Signature(List(ParamSig.Term(scalaIntName)), scalaIntName), termName("+")))
     .get.asTerm
   environment.update(addSymbol, BuiltInMethod { arguments =>
@@ -108,8 +112,11 @@ class ScalaInt(override val value: Int)(using Context) extends ScalaObject(Scala
       case _ => throw TastyEvaluationError("wrong args for Int +")
   })
 
-object ScalaUnit extends ScalaObject(ScalaEnvironment(None))
-type ScalaUnit = ScalaUnit.type
+case class ScalaUnit()(using Context)
+  extends ScalaObject(ScalaEnvironment(None), defn.UnitClass)
+
+case class ScalaNull()(using Context)
+  extends ScalaObject(ScalaEnvironment(None), defn.NullClass)
 
 
 sealed trait ScalaApplicable extends ScalaTerm:
@@ -130,9 +137,15 @@ class BuiltInMethod[T <: ScalaValue]
   override def apply(arguments: List[ScalaTerm])(using Context): T =
     underlying(arguments)
 
-class ScalaConstructor(underlying: ScalaEnvironment => List[ScalaTerm] => Context ?=> ScalaObject)
-    extends ScalaApplicable:
-  var objEnv = ScalaEnvironment(None)
-  def setObjEnv(env: ScalaEnvironment) = objEnv = env
-  override def apply(arguments: List[ScalaTerm])(using Context): ScalaObject =
-    underlying(objEnv)(arguments)
+class ScalaClassMethod(parameters: List[TermSymbol], body: Tree, val symbol: TermSymbol)
+    extends ScalaTerm:
+  def specialize(obj: ScalaObject): ScalaMethod =
+    ScalaMethod(obj.environment, parameters, body)
+  override def forceValue()(using Context): ScalaValue =
+    throw TastyEvaluationError("can't force without object")
+
+class ScalaClassConstructor(val symbol: TermSymbol, val specialize:
+      ScalaUninitializedObject => BuiltInMethod[ScalaObject])
+    extends ScalaTerm:
+  override def forceValue()(using Context): ScalaValue =
+    throw TastyEvaluationError("can't force without object")

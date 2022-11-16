@@ -17,12 +17,14 @@ class BasicSuite extends TastyInterpreterSuite:
     given Context = interpreter.ctx
 
     assertInterpretedEquals(
-      interpreter.evaluate(Apply(makeSelectTree(basicPkg, "Foo", "doit"), List.empty)(NoSpan)),
+      interpreter.evaluate(
+        Apply(makeSelectTree(basicPkg, "Foo", "doit"), List.empty)(NoSpan)),
       basic.Foo.doit,
       5)
 
     assertInterpretedEquals(
-      interpreter.evaluate(Apply(makeSelectTree(basicPkg, "Foo", "doitagain"), List.empty)(NoSpan)),
+      interpreter.evaluate(
+        Apply(makeSelectTree(basicPkg, "Foo", "doitagain"), List.empty)(NoSpan)),
       basic.Foo.doitagain,
       6)
   }
@@ -33,7 +35,8 @@ class BasicSuite extends TastyInterpreterSuite:
     given Context = interpreter.ctx
 
     assertInterpretedEquals(
-      interpreter.evaluate(Apply(makeSelectTree(basicPkg, "Foobar", "doit"), List.empty)(NoSpan)),
+      interpreter.evaluate(
+        Apply(makeSelectTree(basicPkg, "Foobar", "doit"), List.empty)(NoSpan)),
       otherbasic.Foobar.doit,
       7)
   }
