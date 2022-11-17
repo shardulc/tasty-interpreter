@@ -9,6 +9,8 @@ import tastyquery.Names.*
 import tastyquery.Spans.NoSpan
 import tastyquery.Constants.Constant
 import tastyquery.Flags
+import tastyquery.Types
+import tastyquery.Symbols.*
 
 
 class TastyEvaluationError(m: String) extends RuntimeException(m)
@@ -16,6 +18,7 @@ class TastyEvaluationError(m: String) extends RuntimeException(m)
 object Evaluators:
 
   def evaluate(env: ScalaEnvironment)(tree: Tree)(using Context): ScalaValue =
+    // println(tree)
     tree match
       case t: ClassDef => evaluateClassDef(env)(t)
       case t: New => evaluateNew(env)(t)
@@ -40,6 +43,11 @@ object Evaluators:
     //   .map(sym => env.lookup(sym).value match
     //   	case c: ScalaClass => c.environment)
     //   .getOrElse(env)
+    // val parent =
+    //   if tree.symbol.linearization(1) == defn.ObjectClass then
+    //     env
+    //   else env.lookup(tree.symbol.linearization(1)).value match
+    //   	case c: ScalaClass => c.environment
     val parent = env
     val clsEnv = ScalaEnvironment(Some(parent))
 
@@ -56,7 +64,6 @@ object Evaluators:
           case _ => List.empty
         ScalaClassMethod(valParams.map(_.symbol), t.rhs, t.symbol)
       }
-    defDecls.foreach { d => clsEnv(d.symbol) = d }
 
     // 2. bind <init> to do (whiteboard)
     val constructorSymbol = tree.rhs.constr.symbol
@@ -69,21 +76,43 @@ object Evaluators:
         val constrArgs = Map.from(constrParamNames.zip(arguments))
 
         // 1. vals to initialize = 
-        //      (vals defined in this template)
-        //      without (vals that are already null)
+        //      (vals declared in this template)
+        //      without (vals already defined in this env)
         val valsToInit = valDecls
-          .filter(t => objEnv.lookupHere(t.symbol)
-            .map(_.value)
-            .map(_ != ScalaNull)
-            .getOrElse(true))
+          .filterNot(t =>
+            uninitObj.cls.linearization
+              .takeWhile(c => c != tree.symbol)
+              .map(c => t.symbol.overridingSymbol(c))
+              .exists(_.isDefined))
 
-        // 2. set those to null
-        valsToInit.foreach { v => objEnv(v.symbol) = ScalaNull() }
+        // 2. set those to null-like value
+        valsToInit.foreach { v =>
+          if v.symbol.is(Flags.Lazy) then
+            evaluateValDef(objEnv)(v)
+          else
+            val vType = v.rhs.tpe
+            // println(s"${v.symbol} : ${vType}")
+            objEnv(v.symbol) =
+              if vType.isSubtype(defn.IntType) then
+                // println("here")
+                ScalaInt(0)
+              else if vType.isSubtype(defn.UnitType) then
+                ScalaUnit()
+              else
+                ScalaNull()
+        }
 
         // 3. eval parent in current object's environment
         // evaluate(objEnv)(tree.rhs.parents.head.asInstanceOf[Apply])
+        val parent = tree.rhs.parents.head.asInstanceOf[Apply]
+        val superObj =
+          if !parent.tpe.isSameType(defn.ObjectType) then
+            evaluate(objEnv)(parent) match { case o: ScalaObject => Some(o) }
+          else None
 
-        val obj = ScalaObject(objEnv, tree.symbol)
+        val obj = ScalaObject(objEnv, tree.symbol, superObj)
+        if objEnv.thisObjectClass.get == tree.symbol then
+          objEnv.thisObject = Some(obj)
 
         // 4. specialize defs for object
         defDecls.foreach{ d => objEnv(d.symbol) = d.specialize(obj) }
@@ -94,10 +123,10 @@ object Evaluators:
         valsToInit.foreach { v =>
           if v.symbol.is(Flags.ParamAccessor) then
             objEnv(v.symbol) = constrArgs(v.name)
-          else evaluateValDef(objEnv)(v) }
+          else
+            evaluateValDef(objEnv)(v) }
 
         // 6. make this a proper obj and return it
-        objEnv.thisObject = Some(obj)
         obj
     }})
     clsEnv(constructorSymbol) = constructor
@@ -109,20 +138,18 @@ object Evaluators:
     // 1. check env.This is an uninitialized object:
     //    1. if yes, it
     //    2. if no, make one with self-ref This
-    env.thisObject match
-      case Some(obj: ScalaUninitializedObject) => obj
-      case _ =>
-        TypeEvaluators.evaluate(env)(tree.tpe) match
-          case cls: ScalaClass =>
-            // lazy val (objEnv: ScalaEnvironment, obj: ScalaUninitializedObject) =
-            //   (ScalaEnvironment(Some(cls.environment), Some(obj)),
-            //    ScalaUninitializedObject(objEnv))
-            val objEnv = ScalaEnvironment(Some(cls.environment))
-            val obj = ScalaUninitializedObject(objEnv, cls.symbol)
-            objEnv.thisObject = Some(obj)
-            objEnv(cls.constructor.symbol) = cls.constructor.specialize(obj)
-            obj
-          case _ => throw TastyEvaluationError("don't know how to init this")
+    TypeEvaluators.evaluate(env)(tree.tpe) match
+      case cls: ScalaClass =>
+        val obj = env.thisObject match
+          case Some(obj: ScalaUninitializedObject) => obj
+          case _ =>
+            val newObjEnv = ScalaEnvironment(Some(cls.environment), Some(cls.symbol))
+            val newObj = ScalaUninitializedObject(newObjEnv, cls.symbol)
+            newObjEnv.thisObject = Some(newObj)
+            newObj
+        obj.environment(cls.constructor.symbol) = cls.constructor.specialize(obj)
+        obj
+      case _ => throw TastyEvaluationError("don't know how to init this")
 
   def evaluateThis(env: ScalaEnvironment)(t: This)(using Context): ScalaObject =
     env.thisObject.get
@@ -174,5 +201,14 @@ object Evaluators:
       case t: Select =>
         evaluate(env)(t.qualifier) match
           case q: ScalaObject =>
-            q.environment.lookup(tree.tpe.asInstanceOf[TermRef].symbol)
+            val symbol = tree.tpe.asInstanceOf[TermRef].symbol
+            // println(s"linearization ${q.cls.linearization}")
+            // println(s"overrides ${q.cls.linearization.flatMap(c => symbol.overridingSymbol(c).toList)}")
+            val resolved = q.cls.linearization
+              .flatMap(c => symbol.overridingSymbol(c).toList)
+              .headOption
+              .getOrElse(symbol)
+              .asInstanceOf[TermSymbol]
+            // println(s"${symbol} of ${symbol.owner} resolved to ${resolved} of ${resolved.owner}")
+            q.environment.lookup(resolved)
       case t @ _ => throw TastyEvaluationError(s"can't non-force $t")

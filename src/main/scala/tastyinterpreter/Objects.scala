@@ -46,6 +46,7 @@ case class ScalaBox[T](var value: T)
 
 class ScalaEnvironment(
     parent: Option[ScalaEnvironment],
+    val thisObjectClass: Option[ClassSymbol] = None,
     termBindings: mutable.HashMap[TermSymbol, ScalaBox[ScalaTerm]] = mutable.HashMap.empty,
     typeBindings: mutable.HashMap[TypeSymbol, ScalaBox[ScalaType]] = mutable.HashMap.empty):
 
@@ -82,16 +83,18 @@ class ScalaClass(
       val constructor: ScalaClassConstructor)
     extends ScalaType
 
-class ScalaObject(val environment: ScalaEnvironment, val cls: ClassSymbol) extends ScalaValue
+class ScalaObject(val environment: ScalaEnvironment,
+                  val cls: ClassSymbol,
+                  val superObj: Option[ScalaObject]) extends ScalaValue
 class ScalaUninitializedObject(environment: ScalaEnvironment, cls: ClassSymbol)
-  extends ScalaObject(environment, cls)
+  extends ScalaObject(environment, cls, None)
 
 class ScalaLazyValue(valueDefinition: => ScalaValue)(using Context) extends ScalaTerm:
   lazy val value: ScalaValue = valueDefinition
   override def forceValue()(using Context): ScalaValue = value
 
 class ScalaFunctionObject(environment: ScalaEnvironment, method: ScalaMethod)(using Context)
-    extends ScalaObject(environment, defn.Function0Class):
+    extends ScalaObject(environment, defn.Function0Class, None):
   val applySymbol = defn.Function0Class.getDecl(termName("apply")).get.asTerm
   environment.update(applySymbol, BuiltInMethod { arguments  =>
     method.apply(arguments)(using ctx)
@@ -100,7 +103,7 @@ class ScalaFunctionObject(environment: ScalaEnvironment, method: ScalaMethod)(us
 trait ScalaValueExtractor[T](val value: T)
 
 class ScalaInt(override val value: Int)(using Context)
-    extends ScalaObject(ScalaEnvironment(None), defn.IntClass)
+    extends ScalaObject(ScalaEnvironment(None), defn.IntClass, None)
     with ScalaValueExtractor(value):
   val scalaIntName = cls.fullName
   val addSymbol = cls.getDecl(
@@ -111,12 +114,20 @@ class ScalaInt(override val value: Int)(using Context)
       case (a: ScalaInt) :: Nil => ScalaInt(a.value + this.value)
       case _ => throw TastyEvaluationError("wrong args for Int +")
   })
+  val multSymbol = cls.getDecl(
+    SignedName(termName("*"), Signature(List(ParamSig.Term(scalaIntName)), scalaIntName), termName("*")))
+    .get.asTerm
+  environment.update(multSymbol, BuiltInMethod { arguments =>
+    arguments match
+      case (a: ScalaInt) :: Nil => ScalaInt(a.value * this.value)
+      case _ => throw TastyEvaluationError("wrong args for Int *")
+  })
 
 case class ScalaUnit()(using Context)
-  extends ScalaObject(ScalaEnvironment(None), defn.UnitClass)
+  extends ScalaObject(ScalaEnvironment(None), defn.UnitClass, None)
 
 case class ScalaNull()(using Context)
-  extends ScalaObject(ScalaEnvironment(None), defn.NullClass)
+  extends ScalaObject(ScalaEnvironment(None), defn.NullClass, None)
 
 
 sealed trait ScalaApplicable extends ScalaTerm:
