@@ -14,7 +14,6 @@ class BasicSuite extends TastyInterpreterSuite:
   testWithInterpreter("classes and objects") { interpreter =>
     val basicPkg = makePackageName("testinputs", "basic")
     interpreter.evaluateDeclarationsInPackage(basicPkg)
-    given Context = interpreter.ctx
 
     assertInterpretedEquals(
       interpreter.evaluate(
@@ -32,7 +31,6 @@ class BasicSuite extends TastyInterpreterSuite:
   testWithInterpreter("inner class") { interpreter =>
     val basicPkg = makePackageName("testinputs", "otherbasic")
     interpreter.evaluateDeclarationsInPackage(basicPkg)
-    given Context = interpreter.ctx
 
     assertInterpretedEquals(
       interpreter.evaluate(
@@ -45,7 +43,6 @@ class BasicSuite extends TastyInterpreterSuite:
   testWithInterpreter("closures top-level") { interpreter =>
     val basicPkg = makePackageName("testinputs", "basic")
     interpreter.evaluateDeclarationsInPackage(basicPkg)
-    given Context = interpreter.ctx
 
     assertInterpretedEquals(
       interpreter.evaluate(makeSelectTree(basicPkg, "ClosuresTopLevel$package", "y")),
@@ -66,7 +63,6 @@ class BasicSuite extends TastyInterpreterSuite:
   testWithInterpreter("closures") { interpreter =>
     val basicPkg = makePackageName("testinputs", "basic")
     interpreter.evaluateDeclarationsInPackage(basicPkg)
-    given Context = interpreter.ctx
 
     assertInterpretedEquals(
       interpreter.evaluate(makeSelectTree(basicPkg, "Closures", "y")),

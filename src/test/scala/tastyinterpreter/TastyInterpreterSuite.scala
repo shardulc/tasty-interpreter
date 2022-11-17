@@ -33,12 +33,14 @@ class TastyInterpreterSuite extends FunSuite:
   override def munitFixtures = List(clspth)
 
 
-  def testWithInterpreter(testName: String)(testBody: Interpreter => Any) =
-    test(testName) { clspth().map { clspth => testBody(Interpreter(using Contexts.init(clspth))) } }
+  def testWithInterpreter(testName: String)(testBody: Interpreter => Context ?=> Any) =
+    test(testName) { clspth().map { clspth =>
+      val ctx = Contexts.init(clspth)
+      testBody(Interpreter(using ctx))(using ctx) } }
 
   def assertInterpretedEquals[T](result: ScalaTerm, expectedScala: T, expectedManual: T)(using Location) =
-    assert(clue(result.asInstanceOf[ScalaValueExtractor[T]].value) == expectedScala)
-    assert(clue(result.asInstanceOf[ScalaValueExtractor[T]].value) == expectedManual)
+    assert(clue(result.asInstanceOf[ScalaValueExtractor[T]].value) == clue(expectedScala))
+    assert(clue(result.asInstanceOf[ScalaValueExtractor[T]].value) == clue(expectedManual))
 
   def makePackageName(names: String*) = FullyQualifiedName(names.map(termName).toList)
 
