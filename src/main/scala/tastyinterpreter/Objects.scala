@@ -9,6 +9,7 @@ import tastyquery.Names.*
 import tastyquery.Symbols.*
 import tastyquery.Trees.*
 import tastyquery.Signatures.*
+import tastyquery.Flags
 
 
 /*
@@ -45,8 +46,7 @@ sealed trait ScalaType extends ScalaEntity
 case class ScalaBox[T](var value: T)
 
 class ScalaEnvironment(
-    parent: Option[ScalaEnvironment],
-    val thisObjectClass: Option[ClassSymbol] = None,
+    val parent: Option[ScalaEnvironment],
     termBindings: mutable.HashMap[TermSymbol, ScalaBox[ScalaTerm]] = mutable.HashMap.empty,
     typeBindings: mutable.HashMap[TypeSymbol, ScalaBox[ScalaType]] = mutable.HashMap.empty):
 
@@ -85,9 +85,25 @@ class ScalaClass(
 
 class ScalaObject(val environment: ScalaEnvironment,
                   val cls: ClassSymbol,
-                  val superObj: Option[ScalaObject]) extends ScalaValue
-class ScalaUninitializedObject(environment: ScalaEnvironment, cls: ClassSymbol)
-  extends ScalaObject(environment, cls, None)
+                  var superObj: Option[ScalaObject]) extends ScalaValue:
+  def resolve(symbol: TermSymbol)(using Context): ScalaBox[ScalaTerm] =
+    def helper(symbol: Symbol, s: String) = s"$symbol ${symbol.owner} $s \n $environment \n"
+    // println(s"resolving ${symbol}")
+    environment.lookup(
+      cls.linearization
+        .flatMap(c => symbol.overridingSymbol(c).toList)
+        // .flatMap(_.getDecls(symbol.name))
+        // .filter(_.isTerm)
+        // .map(_.asTerm)
+        // .filter(_.declaredType.matchesLoosely(symbol.declaredType))
+        // // .map { s => println(helper(s, "2")); s }
+        // .filterNot(_.is(Flags.Private) && cls != symbol.owner.asClass)
+        // .map { s => println(helper(s, "3")); s }
+        // .headOption
+        // .fold{println(helper(symbol, "1")); symbol}{s => println(helper(s, "2")); s}
+        .head
+        .asTerm
+        )
 
 class ScalaLazyValue(valueDefinition: => ScalaValue)(using Context) extends ScalaTerm:
   lazy val value: ScalaValue = valueDefinition
@@ -156,7 +172,7 @@ class ScalaClassMethod(parameters: List[TermSymbol], body: Tree, val symbol: Ter
     throw TastyEvaluationError("can't force without object")
 
 class ScalaClassConstructor(val symbol: TermSymbol, val specialize:
-      ScalaUninitializedObject => BuiltInMethod[ScalaObject])
+      ScalaObject => BuiltInMethod[ScalaObject])
     extends ScalaTerm:
   override def forceValue()(using Context): ScalaValue =
     throw TastyEvaluationError("can't force without object")
