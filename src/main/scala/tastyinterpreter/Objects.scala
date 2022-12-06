@@ -111,7 +111,7 @@ class ScalaLazyValue(valueDefinition: => ScalaValue)(using Context) extends Scal
 
 class ScalaFunctionObject(environment: ScalaEnvironment, method: ScalaMethod)(using Context)
     extends ScalaObject(environment, defn.Function0Class, None):
-  val applySymbol = defn.Function0Class.getDecl(termName("apply")).get.asTerm
+  val applySymbol = defn.Function0Class.getAllOverloadedDecls(termName("apply")).head
   environment.update(applySymbol, BuiltInMethod { arguments  =>
     method.apply(arguments)(using ctx)
   })

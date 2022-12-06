@@ -19,8 +19,13 @@ object Scopes:
   class ScopesFooSubTwo(y: Int) extends ScopesFoo(y):
     val z = y * 7
     val wshadowed = this.y * 11
+    val wshadowed2 = {
+      val foo: this.type = this
+      foo.y
+    }
 
   val obj2 = ScopesFooSubTwo(17)
+  val test20 = obj2.wshadowed2    // 34 = 2*17
   val test21 = obj2.wshadowed     // 187 = 11*17
   val test22 = obj2.y             // 34 = 2*17
   val test23 = obj2.z             // 119 = 7*17

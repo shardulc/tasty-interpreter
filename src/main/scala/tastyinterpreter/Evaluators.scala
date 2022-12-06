@@ -29,7 +29,6 @@ object Evaluators:
       case t: Lambda => evaluateLambda(env)(t)
       case t: Ident => evaluateIdent(env)(t)
       case Typed(t, _) => evaluate(env)(t)
-      case EmptyTree => ScalaUnit()
       case Literal(Constant(t: Int)) => ScalaInt(t)
       case Literal(Constant(_: Unit)) => ScalaUnit()
       case t: This => evaluateThis(env)(t)
@@ -61,7 +60,12 @@ object Evaluators:
         val valParams: List[ValDef] = t.paramLists match
           case Left(p) :: _ => p
           case _ => List.empty
-        ScalaClassMethod(valParams.map(_.symbol), t.rhs, t.symbol)
+        t.name match
+          case _: SimpleName =>
+            ScalaClassMethod(valParams.map(_.symbol), t.rhs.get, t.symbol)
+          case _ =>
+            throw TastyEvaluationError(
+              s"can't handle name ${t.name} : ${t.name.getClass} yet")
       }
 
     // 2. bind <init> to do (whiteboard)
@@ -173,7 +177,7 @@ object Evaluators:
         tryThis(env)
 
   def evaluateValDef(env: ScalaEnvironment)(tree: ValDef)(using Context): ScalaUnit =
-    def evaledRhs = evaluate(env)(tree.rhs)
+    def evaledRhs = evaluate(env)(tree.rhs.get)
     env(tree.symbol) =
       if tree.symbol.is(Flags.Lazy) then ScalaLazyValue(evaledRhs)
       else evaledRhs
@@ -190,7 +194,7 @@ object Evaluators:
       val valParams: List[ValDef] = tree.paramLists match
         case Left(p) :: _ => p
         case _ => List.empty
-      env(tree.symbol) = ScalaMethod(env, valParams.map(_.symbol), tree.rhs)
+      env(tree.symbol) = ScalaMethod(env, valParams.map(_.symbol), tree.rhs.get)
     ScalaUnit()
 
   def evaluateBlock(env: ScalaEnvironment)(tree: Block)(using Context): ScalaValue =
@@ -215,11 +219,21 @@ object Evaluators:
 
   def evaluateNonForcedIdentSelect(env: ScalaEnvironment)(tree: Tree)(using Context): ScalaBox[ScalaTerm] =
     tree match
-      case t: Ident => env.lookup(t.tpe.asInstanceOf[TermRef].symbol)
+      case t: Ident =>
+        t.symbol match
+          case ts: TermSymbol => env.lookup(ts)
+          case ps: PackageSymbol => throw TastyEvaluationError("can't do packages yet")
+        // env.lookup(t.tpe.asInstanceOf[TermRef].symbol)
       case t: Select =>
         evaluate(env)(t.qualifier) match
           case q: ScalaObject =>
-            val symbol = tree.tpe.asInstanceOf[TermRef].symbol
+            t.symbol match
+              case ts: TermSymbol =>
+                // if t.qualifier.isInstanceOf[This] then
+                //   println(q.environment)
+                //   println(s"$ts ${ts.owner} ${ts.name}")
+                q.resolve(ts)
+              case ps: PackageSymbol => throw TastyEvaluationError("can't do packages yet")
             // println(s"$symbol ${symbol.owner} ${symbol.flags} ${symbol.is(Flags.Private)} ${symbol.allOverriddenSymbols.toList}")
-            q.resolve(symbol)
+            // q.resolve(t.tpe.asInstanceOf[TermRef].symbol)
       case t @ _ => throw TastyEvaluationError(s"can't non-force $t")

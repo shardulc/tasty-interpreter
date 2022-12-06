@@ -10,13 +10,14 @@ object TypeEvaluators:
       case (t: TermRef) => evaluatePrefix(env)(t.prefix).lookup(t.symbol).value
       case (t: TypeRef) => evaluatePrefix(env)(t.prefix).lookup(t.symbol).value
 
-  def evaluatePrefix(env: ScalaEnvironment)(tpe: Type)(using Context): ScalaEnvironment =
+  def evaluatePrefix(env: ScalaEnvironment)(tpe: Prefix)(using Context): ScalaEnvironment =
     tpe match
       case (t: TypeRef) => evaluateTypeRef(env)(t)
       case (t: TermRef) => evaluateTermRef(env)(t)
       case NoPrefix => env
       case (_: PackageRef) => env
       case (t: ThisType) => env
+      case _ => env
 
   def evaluateTypeRef(env: ScalaEnvironment)(tpe: TypeRef)(using Context): ScalaEnvironment =
     evaluatePrefix(env)(tpe.prefix).lookup(tpe.symbol).value match

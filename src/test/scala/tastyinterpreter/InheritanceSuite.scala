@@ -1,11 +1,5 @@
 package tastyinterpreter
 
-import tastyquery.Contexts.Context
-import tastyquery.Names.*
-import tastyquery.Trees.*
-import tastyquery.Spans.NoSpan
-import tastyquery.Types.*
-
 import testinputs.inheritance.*
 
 
@@ -132,6 +126,9 @@ class InheritanceSuite extends TastyInterpreterSuite:
     assertInterpretedEquals(
       interpreter.evaluate(makeSelectTree(pkg, "Scopes", "test13")),
       Scopes.test13, 38)
+    assertInterpretedEquals(
+      interpreter.evaluate(makeSelectTree(pkg, "Scopes", "test20")),
+      Scopes.test20, 34)
     assertInterpretedEquals(
       interpreter.evaluate(makeSelectTree(pkg, "Scopes", "test21")),
       Scopes.test21, 187)

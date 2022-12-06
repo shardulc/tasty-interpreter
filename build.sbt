@@ -15,7 +15,7 @@ lazy val root = (project in file("."))
     scalaJSUseMainModuleInitializer := true,
     scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
 
-    libraryDependencies += "ch.epfl.scala" %%% "tasty-query" % "0.3.1",
+    libraryDependencies += "ch.epfl.scala" %%% "tasty-query" % "0.5.1",
     libraryDependencies += "org.scalameta" %%% "munit" % "0.7.29" % Test,
 
     Test / sourceGenerators += Def.task {

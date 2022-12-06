@@ -46,7 +46,11 @@ class TastyInterpreterSuite extends FunSuite:
 
   def makeSelectTree(packageName: FullyQualifiedName, objectName: String, methodName: String)
       (using c: Context) =
-    val objectSymbol = c.findPackageFromRoot(packageName).getDecl(termName(objectName)).get.asTerm
-    val objectType = TermRef(PackageRef(packageName), objectSymbol)
-    val objectTree = TermRefTree(termName(objectName), objectType)(NoSpan)
-    Select(objectTree, termName(methodName))(NoSpan)
+    val objectSymbol = c.findPackageFromRoot(packageName)
+      .getDecl(termName(objectName))
+      .get
+      .asTerm
+    val pkg = c.findPackageFromRoot(packageName)
+    Select(
+      Ident(SimpleName(objectName))(objectSymbol.staticRef)(NoSpan),
+      SimpleName(methodName))(None)(NoSpan)
