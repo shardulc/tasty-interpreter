@@ -80,7 +80,7 @@ parent: ${parent.toString}"""
 class ScalaClass(
       val environment: ScalaEnvironment,
       val symbol: ClassSymbol,
-      val constructor: ScalaClassConstructor)
+      val constructor: ScalaClassBuiltInMethod)
     extends ScalaType
 
 class ScalaObject(val environment: ScalaEnvironment,
@@ -104,6 +104,15 @@ class ScalaObject(val environment: ScalaEnvironment,
         .head
         .asTerm
         )
+
+  def resolve(name: TermName)(using Context): ScalaBox[ScalaTerm] =
+    // this will only ever be called due to a super-accessor prefixed name
+    environment.lookup(
+      cls.linearization
+        // TODO: the first one is probably not the correct overload resolution
+        .map(_.getAllOverloadedDecls(name).headOption)
+        .collectFirst { case Some(s) => s }
+        .get)
 
 class ScalaLazyValue(valueDefinition: => ScalaValue)(using Context) extends ScalaTerm:
   lazy val value: ScalaValue = valueDefinition
@@ -164,15 +173,23 @@ class BuiltInMethod[T <: ScalaValue]
   override def apply(arguments: List[ScalaTerm])(using Context): T =
     underlying(arguments)
 
-class ScalaClassMethod(parameters: List[TermSymbol], body: Tree, val symbol: TermSymbol)
-    extends ScalaTerm:
+sealed trait ScalaSpecializable:
+  def symbol: TermSymbol
+  def specialize(obj: ScalaObject): ScalaApplicable
+
+class ScalaClassMethod(
+      parameters: List[TermSymbol], body: Tree,
+      val symbol: TermSymbol)
+    extends ScalaTerm with ScalaSpecializable:
   def specialize(obj: ScalaObject): ScalaMethod =
     ScalaMethod(obj.environment, parameters, body)
   override def forceValue()(using Context): ScalaValue =
     throw TastyEvaluationError("can't force without object")
 
-class ScalaClassConstructor(val symbol: TermSymbol, val specialize:
-      ScalaObject => BuiltInMethod[ScalaObject])
-    extends ScalaTerm:
+class ScalaClassBuiltInMethod(
+      specializer: ScalaObject => BuiltInMethod[ScalaObject],
+      val symbol: TermSymbol)
+    extends ScalaTerm with ScalaSpecializable:
+  def specialize(obj: ScalaObject) = specializer(obj)
   override def forceValue()(using Context): ScalaValue =
     throw TastyEvaluationError("can't force without object")

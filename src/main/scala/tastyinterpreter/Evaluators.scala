@@ -1,6 +1,6 @@
 package tastyinterpreter
 
-import scala.collection.mutable.HashMap
+import dotty.tools.tasty.TastyFormat.NameTags
 
 import tastyquery.Trees.*
 import tastyquery.Types.*
@@ -18,6 +18,7 @@ class TastyEvaluationError(m: String) extends RuntimeException(m)
 object Evaluators:
 
   def evaluate(env: ScalaEnvironment)(tree: Tree)(using Context): ScalaValue =
+    // println(tree.toString().take(100))
     tree match
       case t: ClassDef => evaluateClassDef(env)(t)
       case t: New => evaluateNew(env)(t)
@@ -32,6 +33,7 @@ object Evaluators:
       case Literal(Constant(t: Int)) => ScalaInt(t)
       case Literal(Constant(_: Unit)) => ScalaUnit()
       case t: This => evaluateThis(env)(t)
+      case t: Super => evaluateSuper(env)(t)
       case t: Assign => evaluateAssign(env)(t)
       case t @ _ => throw TastyEvaluationError(s"not implemented for ${t.toString}")
 
@@ -55,7 +57,7 @@ object Evaluators:
     val classDecls = filterType[ClassDef](tree.rhs.body)
 
     // 2. DefDefs to be specialized per object
-    val defDecls = filterType[DefDef](tree.rhs.body)
+    val defDecls: Iterable[ScalaSpecializable] = filterType[DefDef](tree.rhs.body)
       .map { t =>
         val valParams: List[ValDef] = t.paramLists match
           case Left(p) :: _ => p
@@ -63,6 +65,21 @@ object Evaluators:
         t.name match
           case _: SimpleName =>
             ScalaClassMethod(valParams.map(_.symbol), t.rhs.get, t.symbol)
+          case PrefixedName(tag, underlying) =>
+            tag match
+              case NameTags.SUPERACCESSOR =>
+                ScalaClassBuiltInMethod({ obj =>
+                  BuiltInMethod({ args =>
+                    val method = evaluateSuperHelper(obj).resolve(underlying).value match
+                      case m: ScalaApplicable => m
+                      case _ =>
+                        throw TastyEvaluationError("super accessor must refer to method")
+                    method.apply(args) match
+                      case o: ScalaObject => o
+                  })
+                }, t.symbol)
+              case NameTags.INLINEACCESSOR =>
+                throw TastyEvaluationError("inline accessors not implemented yet")
           case _ =>
             throw TastyEvaluationError(
               s"can't handle name ${t.name} : ${t.name.getClass} yet")
@@ -70,7 +87,7 @@ object Evaluators:
 
     // 2. bind <init> to do (whiteboard)
     val constructorSymbol = tree.rhs.constr.symbol
-    val constructor = ScalaClassConstructor(constructorSymbol, { uninitObj =>
+    val constructor = ScalaClassBuiltInMethod({ uninitObj =>
       val objEnv = uninitObj.environment
       BuiltInMethod[ScalaObject]{ arguments =>
         val constrParamNames = tree.rhs.constr.paramLists match
@@ -121,7 +138,6 @@ object Evaluators:
 
         // 4. specialize defs for object
         defDecls.foreach{ d =>
-          // println(s"evaling def: ${d.symbol}")
           objEnv(d.symbol) = d.specialize(obj) }
 
         classDecls.foreach(evaluateClassDef(objEnv))
@@ -131,7 +147,7 @@ object Evaluators:
 
         // 6. make this a proper obj and return it
         obj
-    }})
+    }}, constructorSymbol)
     clsEnv(constructorSymbol) = constructor
     env(tree.symbol) = ScalaClass(clsEnv, tree.symbol, constructor)
 
@@ -162,19 +178,31 @@ object Evaluators:
       case _ => throw TastyEvaluationError("don't know how to init this")
 
   def evaluateThis(env: ScalaEnvironment)(t: This)(using Context): ScalaObject =
-    t.qualifier match
-      case None => env.thisObject.get
-      case Some(qualifier) =>
-        val qualSymbol = TypeEvaluators.evaluate(env)(qualifier.toType) match
+    val qualSymbol = TypeEvaluators.evaluate(env)(t.qualifier.toType) match
+      case c: ScalaClass => c.symbol
+      case _ => throw TastyEvaluationError("This() qualifier is not a class")
+    // println(t.qualifier.toType)
+    // println(qualSymbol)
+    def findEnclosingFrame(e: ScalaEnvironment): ScalaObject =
+      if e.thisObject.get.cls.isSubclass(qualSymbol) then
+        e.thisObject.get
+      else findEnclosingFrame(e.parent.get.parent.get)
+    findEnclosingFrame(env)
+
+  def evaluateSuperHelper(obj: ScalaObject): ScalaObject =
+    obj.superObj.get
+
+  def evaluateSuper(env: ScalaEnvironment)(t: Super)(using Context): ScalaObject =
+    t.qual match
+      case q: This =>
+        val qualSymbol = TypeEvaluators.evaluate(env)(q.qualifier.toType) match
           case c: ScalaClass => c.symbol
           case _ => throw TastyEvaluationError("This() qualifier is not a class")
-        println(qualifier)
-        println(qualSymbol)
-        def tryThis(e: ScalaEnvironment): ScalaObject =
-          if e.thisObject.get.cls.isSubclass(qualSymbol) then
-            e.thisObject.get
-          else tryThis(e.parent.get.parent.get)
-        tryThis(env)
+        def findEnclosingObject(o: ScalaObject): ScalaObject =
+          // println(s"${o.cls} ${qualSymbol} ${o.superObj.map(_.cls)}")
+          if o.cls == qualSymbol then o else findEnclosingObject(evaluateSuperHelper(o))
+        evaluateSuperHelper(findEnclosingObject(evaluateThis(env)(q)))
+      case _ => throw TastyEvaluationError(s"expecting Super.qual to be This, got ${t.qual}")
 
   def evaluateValDef(env: ScalaEnvironment)(tree: ValDef)(using Context): ScalaUnit =
     def evaledRhs = evaluate(env)(tree.rhs.get)
