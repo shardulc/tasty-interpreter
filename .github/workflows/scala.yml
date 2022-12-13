@@ -24,7 +24,7 @@ jobs:
     - name: Setup Node.js environment
       uses: actions/setup-node@v3.5.1
     - name: Cache Node dependencies
-      uses: actions/cache@v2
+      uses: actions/cache@v3.0.11
       with:
         path: ~/.npm
         key: npm-${{ hashFiles('package-lock.json') }}
