@@ -18,29 +18,27 @@ interpreted entity hierarchy
 
 sealed ScalaEntity
 -- sealed ScalaTerm
-   -- sealed ScalaValue
-      -- ScalaObject
-         -- ScalaFunctionObject
-         -- ScalaInt (with ScalaValueExtractor)
-         -- ScalaUnit
-         -- ScalaUninitializedObject
+   -- ScalaObject
+      -- ScalaFunctionObject
+      -- ScalaInt (with ScalaValueExtractor)
+      -- ScalaUnit
    -- sealed ScalaApplicable
       -- ScalaMethod
       -- BuiltInMethod
-   -- ScalaClassMethod
-   -- ScalaClassConstructor
    -- ScalaLazyValue
 -- sealed ScalaType
    -- ScalaClass
+
+sealed ScalaSpecializable
+-- ScalaClassMethod
+-- ScalaClassBuiltInMethod
 
 */
 
 
 sealed trait ScalaEntity
 sealed trait ScalaTerm extends ScalaEntity:
-  def forceValue()(using Context): ScalaValue
-sealed trait ScalaValue extends ScalaTerm:
-  override def forceValue()(using Context): ScalaValue = this
+  def forceValue()(using Context): ScalaObject
 sealed trait ScalaType extends ScalaEntity
 
 case class ScalaBox[T](var value: T)
@@ -48,9 +46,11 @@ case class ScalaBox[T](var value: T)
 class ScalaEnvironment(
     val parent: Option[ScalaEnvironment],
     termBindings: mutable.HashMap[TermSymbol, ScalaBox[ScalaTerm]] = mutable.HashMap.empty,
-    typeBindings: mutable.HashMap[TypeSymbol, ScalaBox[ScalaType]] = mutable.HashMap.empty):
+    typeBindings: mutable.HashMap[TypeSymbol, ScalaBox[ScalaType]] = mutable.HashMap.empty,
+    thisObj: => Option[ScalaObject] = None):
 
-  var thisObject: Option[ScalaObject] = parent.flatMap(_.thisObject)
+  lazy val thisObject: Option[ScalaObject] =
+    thisObj.orElse(parent.flatMap(_.thisObject))
 
   def update(symbol: TermSymbol, value: ScalaTerm): Unit =
     termBindings.update(symbol, ScalaBox(value))
@@ -68,9 +68,6 @@ class ScalaEnvironment(
   def lookup(symbol: TypeSymbol): ScalaBox[ScalaType] =
     typeBindings.getOrElse(symbol, parent.get.lookup(symbol))
 
-  def lookupHere(symbol: TermSymbol): Option[ScalaBox[ScalaTerm]] =
-    termBindings.get(symbol)
-
   override def toString(): String =
     s"""term bindings: ${termBindings.keysIterator.toList.map(s => s.name.toString() + s.owner.toString + s.flags.toString() )}
 type bindings: ${typeBindings.keysIterator.toList.toString()}
@@ -83,27 +80,16 @@ class ScalaClass(
       val constructor: ScalaClassBuiltInMethod)
     extends ScalaType
 
-class ScalaObject(val environment: ScalaEnvironment,
+class ScalaObject(env: => ScalaEnvironment,
                   val cls: ClassSymbol,
-                  var superObj: Option[ScalaObject]) extends ScalaValue:
+                  var superObject: Option[ScalaObject]) extends ScalaTerm:
+  lazy val environment = env
+
   def resolve(symbol: TermSymbol)(using Context): ScalaBox[ScalaTerm] =
-    def helper(symbol: Symbol, s: String) = s"$symbol ${symbol.owner} $s \n $environment \n"
-    // println(s"resolving ${symbol}")
     environment.lookup(
       cls.linearization
-        .flatMap(c => symbol.overridingSymbol(c).toList)
-        // .flatMap(_.getDecls(symbol.name))
-        // .filter(_.isTerm)
-        // .map(_.asTerm)
-        // .filter(_.declaredType.matchesLoosely(symbol.declaredType))
-        // // .map { s => println(helper(s, "2")); s }
-        // .filterNot(_.is(Flags.Private) && cls != symbol.owner.asClass)
-        // .map { s => println(helper(s, "3")); s }
-        // .headOption
-        // .fold{println(helper(symbol, "1")); symbol}{s => println(helper(s, "2")); s}
-        .head
-        .asTerm
-        )
+        .collectFirst{ c => symbol.overridingSymbol(c) match { case Some(s) => s } }
+        .get.asTerm)
 
   def resolve(name: TermName)(using Context): ScalaBox[ScalaTerm] =
     // this will only ever be called due to a super-accessor prefixed name
@@ -114,9 +100,12 @@ class ScalaObject(val environment: ScalaEnvironment,
         .collectFirst { case Some(s) => s }
         .get)
 
-class ScalaLazyValue(valueDefinition: => ScalaValue)(using Context) extends ScalaTerm:
-  lazy val value: ScalaValue = valueDefinition
-  override def forceValue()(using Context): ScalaValue = value
+  override def forceValue()(using Context): ScalaObject = this
+
+
+class ScalaLazyValue(valueDefinition: => ScalaObject)(using Context) extends ScalaTerm:
+  lazy val value: ScalaObject = valueDefinition
+  override def forceValue()(using Context): ScalaObject = value
 
 class ScalaFunctionObject(environment: ScalaEnvironment, method: ScalaMethod)(using Context)
     extends ScalaObject(environment, defn.Function0Class, None):
@@ -156,22 +145,23 @@ case class ScalaNull()(using Context)
 
 
 sealed trait ScalaApplicable extends ScalaTerm:
-  def apply(arguments: List[ScalaTerm])(using Context): ScalaValue
-  override def forceValue()(using Context): ScalaValue = apply(List.empty)
+  def apply(arguments: List[ScalaTerm])(using Context): ScalaObject
+  override def forceValue()(using Context): ScalaObject = apply(List.empty)
 
 class ScalaMethod(
     parent: ScalaEnvironment,
     parameters: List[TermSymbol],
     body: Tree) extends ScalaApplicable:
-  override def apply(arguments: List[ScalaTerm])(using Context): ScalaValue =
+  override def apply(arguments: List[ScalaTerm])(using Context): ScalaObject =
     val callEnvironment = ScalaEnvironment(Some(parent))
     callEnvironment.bindAll(parameters.zip(arguments))
     Evaluators.evaluate(callEnvironment)(body)
 
-class BuiltInMethod[T <: ScalaValue]
+class BuiltInMethod[T <: ScalaObject]
     (underlying: List[ScalaTerm] => Context ?=> T) extends ScalaApplicable:
   override def apply(arguments: List[ScalaTerm])(using Context): T =
     underlying(arguments)
+
 
 sealed trait ScalaSpecializable:
   def symbol: TermSymbol
@@ -180,16 +170,12 @@ sealed trait ScalaSpecializable:
 class ScalaClassMethod(
       parameters: List[TermSymbol], body: Tree,
       val symbol: TermSymbol)
-    extends ScalaTerm with ScalaSpecializable:
+    extends ScalaSpecializable:
   def specialize(obj: ScalaObject): ScalaMethod =
     ScalaMethod(obj.environment, parameters, body)
-  override def forceValue()(using Context): ScalaValue =
-    throw TastyEvaluationError("can't force without object")
 
 class ScalaClassBuiltInMethod(
       specializer: ScalaObject => BuiltInMethod[ScalaObject],
       val symbol: TermSymbol)
-    extends ScalaTerm with ScalaSpecializable:
+    extends ScalaSpecializable:
   def specialize(obj: ScalaObject) = specializer(obj)
-  override def forceValue()(using Context): ScalaValue =
-    throw TastyEvaluationError("can't force without object")

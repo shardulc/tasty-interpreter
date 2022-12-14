@@ -17,8 +17,7 @@ class TastyEvaluationError(m: String) extends RuntimeException(m)
 
 object Evaluators:
 
-  def evaluate(env: ScalaEnvironment)(tree: Tree)(using Context): ScalaValue =
-    // println(tree.toString().take(100))
+  def evaluate(env: ScalaEnvironment)(tree: Tree)(using Context): ScalaObject =
     tree match
       case t: ClassDef => evaluateClassDef(env)(t)
       case t: New => evaluateNew(env)(t)
@@ -26,39 +25,29 @@ object Evaluators:
       case t: DefDef => evaluateDefDef(env)(t)
       case t: Block => evaluateBlock(env)(t)
       case t: Apply => evaluateApply(env)(t)
-      case t: Select => evaluateSelect(env)(t)
       case t: Lambda => evaluateLambda(env)(t)
-      case t: Ident => evaluateIdent(env)(t)
+      case t: (Ident | Select) => evaluateIdentSelect(env)(t)
       case Typed(t, _) => evaluate(env)(t)
       case Literal(Constant(t: Int)) => ScalaInt(t)
       case Literal(Constant(_: Unit)) => ScalaUnit()
+      case Literal(Constant(null)) => ScalaNull()
       case t: This => evaluateThis(env)(t)
       case t: Super => evaluateSuper(env)(t)
       case t: Assign => evaluateAssign(env)(t)
       case t @ _ => throw TastyEvaluationError(s"not implemented for ${t.toString}")
 
+
   def evaluateClassDef(env: ScalaEnvironment)(tree: ClassDef)(using Context): ScalaUnit =
-    // 1. class with parent = symbol.linearization, env child of current
-    // val parent = tree.symbol.linearization.headOption
-    //   .map(sym => env.lookup(sym).value match
-    //   	case c: ScalaClass => c.environment)
-    //   .getOrElse(env)
-    // val parent =
-    //   if tree.symbol.linearization(1) == defn.ObjectClass then
-    //     env
-    //   else env.lookup(tree.symbol.linearization(1)).value match
-    //   	case c: ScalaClass => c.environment
-    val parent = env
-    val clsEnv = ScalaEnvironment(Some(parent))
 
     inline def filterType[U <: Tree](l: Iterable[Tree]): Iterable[U] =
-      l.flatMap(_ match { case u: U => List(u); case _ => List.empty })
+      l.flatMap((_: @unchecked) match { case u: U => List(u); case _ => List.empty })
     val valDecls = filterType[ValDef](tree.rhs.body)
     val classDecls = filterType[ClassDef](tree.rhs.body)
 
-    // 2. DefDefs to be specialized per object
-    val defDecls: Iterable[ScalaSpecializable] = filterType[DefDef](tree.rhs.body)
+    val defDecls = filterType[DefDef](tree.rhs.body)
       .map { t =>
+        // TODO: handle constructor params that are
+        // not just a single list of term params
         val valParams: List[ValDef] = t.paramLists match
           case Left(p) :: _ => p
           case _ => List.empty
@@ -68,14 +57,18 @@ object Evaluators:
           case PrefixedName(tag, underlying) =>
             tag match
               case NameTags.SUPERACCESSOR =>
+                // super-accessors are artifact methods generated in circumstances
+                // such as the foo() method in class Inner in testinputs.inheritance.Super
+                // (accessing super of enclosing class)
                 ScalaClassBuiltInMethod({ obj =>
                   BuiltInMethod({ args =>
-                    val method = evaluateSuperHelper(obj).resolve(underlying).value match
+                    // this is the only place we have to resolve by name instead of symbol
+                    // (can we avoid it?)
+                    val method = obj.superObject.get.resolve(underlying).value match
                       case m: ScalaApplicable => m
                       case _ =>
                         throw TastyEvaluationError("super accessor must refer to method")
-                    method.apply(args) match
-                      case o: ScalaObject => o
+                    method.apply(args)
                   })
                 }, t.symbol)
               case NameTags.INLINEACCESSOR =>
@@ -85,11 +78,50 @@ object Evaluators:
               s"can't handle name ${t.name} : ${t.name.getClass} yet")
       }
 
-    // 2. bind <init> to do (whiteboard)
-    val constructorSymbol = tree.rhs.constr.symbol
-    val constructor = ScalaClassBuiltInMethod({ uninitObj =>
-      val objEnv = uninitObj.environment
+    /*
+     * Suppose a class C has linearization L. Then instantiating an object of C
+     * will result in a new ScalaObject in the interpreter for each template in L,
+     * that all share the same ScalaEnvironment where their fields and methods are
+     * bound. The environment's thisObject will point to the 'bottom' ScalaObject,
+     * that is, the one corresponding to C. Each ScalaObject's superObject points
+     * to the ScalaObject one step up in the linearization.
+     *
+     * Of course, the superObject pointer can only be initialized after the
+     * 'higher' object is instantiated and returned from its constructor. Thus
+     * there is a brief period between the creation of the 'bottom' ScalaObject
+     * and the conclusion of its parent constructors, and their parent constructors,
+     * etc., when its superObject is None. This is exactly the period in which
+     * evaluateNew does not create new object environments, but only new objects,
+     * using the environment of the 'bottom' object still being instantiated.
+     *
+     * Also note that each object has access to the 'bottom' object through
+     * thisObject, and thus knows its position in the linearization. This knowledge
+     * is used in the constructors.
+     *
+     * A constructor takes an uninstantiated object freshly created by evaluateNew
+     * and instantiates it with the following steps:
+     *  1. Fields that access constructor arguments are bound in the object's
+     *     environment to the values of those arguments. (They may be needed to
+     *     call parent constructors, which happens before other fields are bound.)
+     *  2. Other fields are initialized to null/false/zero/equivalent per their
+     *     erased type. Lazy vals are initialized but not computed. Both these
+     *     initializations are done for fields that are *not overridden* by an
+     *     object lower in the linearization. thisObject is used to access the
+     *     linearization of the 'bottom' object.
+     *  3. The parent constructors are evaluated in the object's environment and the
+     *     superObject is set accordingly.
+     *  4. The class' methods, represented in the interpreter as ScalaSpecializables,
+     *     are specialized to this object and bound in its environment.
+     *  5. Inner classes and non-overridden fields are initialized. New bindings in
+     *     the object's environment are created for inner classes while the bindings
+     *     from step 2 are updated for fields.
+     *  6. The object is considered instantiated and is returned from the constructor.
+     */
+    val constructor = ScalaClassBuiltInMethod({ uninstObj =>
       BuiltInMethod[ScalaObject]{ arguments =>
+        val objEnv = uninstObj.environment
+
+        // 1. bind constructor argument accessors
         val constrParamNames = tree.rhs.constr.paramLists match
           case Left(p) :: _ => p.map(_.name)
           case _ => List.empty
@@ -98,9 +130,7 @@ object Evaluators:
           .filter(_.symbol.is(Flags.ParamAccessor))
           .foreach { v => objEnv(v.symbol) = constrArgs(v.name) }
 
-        // 1. vals to initialize = 
-        //      (vals declared in this template)
-        //      without (vals already defined in this env)
+        // 2. compute non-overridden fields, and init them to null-like
         val valsToInit = valDecls
           .filterNot(_.symbol.is(Flags.ParamAccessor))
           .filterNot(t =>
@@ -108,9 +138,7 @@ object Evaluators:
               .takeWhile(c => c != tree.symbol)
               .map(c => t.symbol.overridingSymbol(c))
               .exists(_.isDefined))
-        // println(s"me: ${tree.symbol}\nlinearization: ${objEnv.thisObject.get.cls.linearization}\nmy vals: ${valsToInit.map(_.symbol)}\n\n")
 
-        // 2. set those to null-like value
         valsToInit.foreach { v =>
           if v.symbol.is(Flags.Lazy) then
             evaluateValDef(objEnv)(v)
@@ -125,52 +153,46 @@ object Evaluators:
               case ErasedTypeRef.ArrayTypeRef(_, _) => ScalaNull()
         }
 
-        // 3. eval parent in current object's environment
-        // evaluate(objEnv)(tree.rhs.parents.head.asInstanceOf[Apply])
+        // 3. eval parents in current object's environment and set superObject
         val parent = tree.rhs.parents.head.asInstanceOf[Apply]
-        // println(s"i'm ${tree.symbol} initing parent $parent")
-        uninitObj.superObj =
+        uninstObj.superObject =
           if !parent.tpe.isSameType(defn.ObjectType) then
-            evaluate(objEnv)(parent) match { case o: ScalaObject => Some(o) }
+            Some(evaluate(objEnv)(parent))
           else Some(ScalaUnit())
-        // this is now an 'initialized' object
-        val obj = uninitObj
 
-        // 4. specialize defs for object
+        // 4. specialize methods
         defDecls.foreach{ d =>
-          objEnv(d.symbol) = d.specialize(obj) }
+          objEnv(d.symbol) = d.specialize(uninstObj) }
 
+        // 5. bind inner classes and non-overridden fields
         classDecls.foreach(evaluateClassDef(objEnv))
-
-        // 5. init vals
         valsToInit.foreach(evaluateValDef(objEnv))
 
-        // 6. make this a proper obj and return it
-        obj
-    }}, constructorSymbol)
-    clsEnv(constructorSymbol) = constructor
-    env(tree.symbol) = ScalaClass(clsEnv, tree.symbol, constructor)
+        // 6. return the now instantiated object
+        uninstObj
+    }}, tree.rhs.constr.symbol)
 
+    env(tree.symbol) = ScalaClass(env, tree.symbol, constructor)
     ScalaUnit()
 
+
   def evaluateNew(env: ScalaEnvironment)(tree: New)(using Context): ScalaObject =
-    // 1. check env.This is an uninitialized object:
-    //    1. if yes, it
-    //    2. if no, make one with self-ref This
     TypeEvaluators.evaluate(env)(tree.tpe) match
       case cls: ScalaClass =>
         val obj =
           // if thisObject exists:
           //   if its superObj exists:
-          //     fully defined previous obj, should create new env
+          //     fully instantiated previous obj, should create new env
           //   else:
-          //     we are in the middle of initing, use thisObject.env
+          //     we are in the middle of instantiating, use thisObject.env
           // else:
-          //   fully defined previous obj, should create new env
-          if env.thisObject.isEmpty || env.thisObject.get.superObj.isDefined then
-            val newObjEnv = ScalaEnvironment(Some(cls.environment))
-            val newObj = ScalaObject(newObjEnv, cls.symbol, None)
-            newObjEnv.thisObject = Some(newObj)
+          //   fully instantiated previous obj, should create new env
+          // see comment in evaluateClassDef for more
+          if env.thisObject.isEmpty || env.thisObject.get.superObject.isDefined then
+            // lazy vals for mutual reference
+            lazy val (newObjEnv: ScalaEnvironment, newObj: ScalaObject) =
+              (ScalaEnvironment(Some(cls.environment), thisObj = Some(newObj)),
+               ScalaObject(newObjEnv, cls.symbol, None))
             newObj
           else ScalaObject(env.thisObject.get.environment, cls.symbol, None)
         obj.environment(cls.constructor.symbol) = cls.constructor.specialize(obj)
@@ -181,16 +203,12 @@ object Evaluators:
     val qualSymbol = TypeEvaluators.evaluate(env)(t.qualifier.toType) match
       case c: ScalaClass => c.symbol
       case _ => throw TastyEvaluationError("This() qualifier is not a class")
-    // println(t.qualifier.toType)
-    // println(qualSymbol)
     def findEnclosingFrame(e: ScalaEnvironment): ScalaObject =
       if e.thisObject.get.cls.isSubclass(qualSymbol) then
         e.thisObject.get
-      else findEnclosingFrame(e.parent.get.parent.get)
+      // remember: e.parent is the enclosing frame, not the super object!
+      else findEnclosingFrame(e.parent.get)
     findEnclosingFrame(env)
-
-  def evaluateSuperHelper(obj: ScalaObject): ScalaObject =
-    obj.superObj.get
 
   def evaluateSuper(env: ScalaEnvironment)(t: Super)(using Context): ScalaObject =
     t.qual match
@@ -199,9 +217,9 @@ object Evaluators:
           case c: ScalaClass => c.symbol
           case _ => throw TastyEvaluationError("This() qualifier is not a class")
         def findEnclosingObject(o: ScalaObject): ScalaObject =
-          // println(s"${o.cls} ${qualSymbol} ${o.superObj.map(_.cls)}")
-          if o.cls == qualSymbol then o else findEnclosingObject(evaluateSuperHelper(o))
-        evaluateSuperHelper(findEnclosingObject(evaluateThis(env)(q)))
+          if o.cls == qualSymbol then o
+          else findEnclosingObject(o.superObject.get)
+        findEnclosingObject(evaluateThis(env)(q)).superObject.get
       case _ => throw TastyEvaluationError(s"expecting Super.qual to be This, got ${t.qual}")
 
   def evaluateValDef(env: ScalaEnvironment)(tree: ValDef)(using Context): ScalaUnit =
@@ -212,7 +230,11 @@ object Evaluators:
     ScalaUnit()
 
   def evaluateAssign(env: ScalaEnvironment)(tree: Assign)(using Context): ScalaUnit =
-    evaluateNonForcedIdentSelect(env)(tree.lhs).value = evaluate(env)(tree.rhs)
+    tree.lhs match
+      case lhs: (Ident | Select) =>
+        evaluateNonForcedIdentSelect(env)(lhs).value = evaluate(env)(tree.rhs)
+      case lhs @ _ =>
+        throw TastyEvaluationError(s"don't know how to assign to ${lhs.getClass}")
     ScalaUnit()
 
   def evaluateDefDef(env: ScalaEnvironment)(tree: DefDef)
@@ -225,43 +247,45 @@ object Evaluators:
       env(tree.symbol) = ScalaMethod(env, valParams.map(_.symbol), tree.rhs.get)
     ScalaUnit()
 
-  def evaluateBlock(env: ScalaEnvironment)(tree: Block)(using Context): ScalaValue =
+  def evaluateBlock(env: ScalaEnvironment)(tree: Block)(using Context): ScalaObject =
     tree.stats.foreach(evaluate(env))
     evaluate(env)(tree.expr)
 
-  def evaluateApply(env: ScalaEnvironment)(tree: Apply)(using Context): ScalaValue =
+  def evaluateApply(env: ScalaEnvironment)(tree: Apply)(using Context): ScalaObject =
     // ignore possibility of call-by-name
-    evaluateNonForcedIdentSelect(env)(tree.fun).value match
-      case f: ScalaApplicable => f.apply(tree.args.map(evaluate(env)))
-      case f @ _ => throw TastyEvaluationError(s"can't apply ${f}")
+    tree.fun match
+      case fun: (Ident | Select) =>
+        evaluateNonForcedIdentSelect(env)(fun).value match
+          case f: ScalaApplicable => f.apply(tree.args.map(evaluate(env)))
+          case f @ _ => throw TastyEvaluationError(s"can't apply ${f}")
+      case fun @ _ =>
+        throw TastyEvaluationError(s"don't know how to apply ${fun.getClass}")
 
-  def evaluateLambda(env: ScalaEnvironment)(tree: Lambda)(using c: Context): ScalaFunctionObject =
-    val method = evaluateNonForcedIdentSelect(env)(tree.meth).value.asInstanceOf[ScalaMethod]
-    ScalaFunctionObject(ScalaEnvironment(Some(env)), method)
+  def evaluateLambda(env: ScalaEnvironment)(tree: Lambda)
+      (using Context): ScalaFunctionObject =
+    tree.meth match
+      case meth: (Ident | Select) =>
+        val method = evaluateNonForcedIdentSelect(env)(meth).value match
+          case m: ScalaMethod => m
+          case m =>
+            throw TastyEvaluationError(s"Lambda must refer to method, not ${m.getClass}")
+        ScalaFunctionObject(ScalaEnvironment(Some(env)), method)
+      case meth @ _ =>
+        throw TastyEvaluationError(s"Lambda must refer to method, not ${meth.getClass}")
 
-  def evaluateIdent(env: ScalaEnvironment)(tree: Ident)(using Context): ScalaValue =
+  def evaluateIdentSelect(env: ScalaEnvironment)(tree: Ident | Select)
+      (using Context): ScalaObject =
     evaluateNonForcedIdentSelect(env)(tree).value.forceValue()
 
-  def evaluateSelect(env: ScalaEnvironment)(tree: Select)(using Context): ScalaValue =
-    evaluateNonForcedIdentSelect(env)(tree).value.forceValue()
-
-  def evaluateNonForcedIdentSelect(env: ScalaEnvironment)(tree: Tree)(using Context): ScalaBox[ScalaTerm] =
+  def evaluateNonForcedIdentSelect(env: ScalaEnvironment)(tree: Ident | Select)
+      (using Context): ScalaBox[ScalaTerm] =
     tree match
       case t: Ident =>
         t.symbol match
           case ts: TermSymbol => env.lookup(ts)
           case ps: PackageSymbol => throw TastyEvaluationError("can't do packages yet")
-        // env.lookup(t.tpe.asInstanceOf[TermRef].symbol)
       case t: Select =>
-        evaluate(env)(t.qualifier) match
-          case q: ScalaObject =>
-            t.symbol match
-              case ts: TermSymbol =>
-                // if t.qualifier.isInstanceOf[This] then
-                //   println(q.environment)
-                //   println(s"$ts ${ts.owner} ${ts.name}")
-                q.resolve(ts)
-              case ps: PackageSymbol => throw TastyEvaluationError("can't do packages yet")
-            // println(s"$symbol ${symbol.owner} ${symbol.flags} ${symbol.is(Flags.Private)} ${symbol.allOverriddenSymbols.toList}")
-            // q.resolve(t.tpe.asInstanceOf[TermRef].symbol)
-      case t @ _ => throw TastyEvaluationError(s"can't non-force $t")
+        val qualifier = evaluate(env)(t.qualifier)
+        t.symbol match
+          case ts: TermSymbol => qualifier.resolve(ts)
+          case ps: PackageSymbol => throw TastyEvaluationError("can't do packages yet")
