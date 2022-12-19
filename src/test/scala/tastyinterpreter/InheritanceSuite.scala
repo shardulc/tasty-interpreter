@@ -192,4 +192,7 @@ class InheritanceSuite extends TastyInterpreterSuite:
     assertInterpretedEquals(
       interpreter.evaluate(makeSelectTree(pkg, "Super", "test31")),
       Super.test31, 462)
+    assertInterpretedEquals(
+      interpreter.evaluate(makeSelectTree(pkg, "Super", "test40")),
+      Super.test40, 70)
   }

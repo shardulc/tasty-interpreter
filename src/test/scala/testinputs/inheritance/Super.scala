@@ -44,3 +44,15 @@ object Super:
   val obj3 = obj3Outer.Inner()
   val test30 = obj3.foo         // 6 = 2*3
   val test31 = obj3.bar         // 462 = 2*3*7*11
+
+
+  class AnotherFoo:
+    def foo = 2 * bar
+    def bar = 3
+
+  class AnotherFooSub extends AnotherFoo:
+    override def foo = 5 * super.foo
+    override def bar = 7
+
+  val obj4 = AnotherFooSub()
+  val test40 = obj4.foo         // 70 = 2*5*7
