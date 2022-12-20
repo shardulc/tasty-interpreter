@@ -85,3 +85,18 @@ class MixinsSuite extends TastyInterpreterSuite:
       interpreter.evaluate(makeSelectTree(pkg, "Mixins", "test44")),
       Mixins.test44, 2)
   }
+
+  testWithInterpreter("diamond problem") { interpreter =>
+    val pkg = makePackageName("testinputs", "inheritance")
+    interpreter.evaluateDeclarationsInPackage(pkg)
+
+    assertInterpretedEquals(
+      interpreter.evaluate(makeSelectTree(pkg, "Diamond", "test1")),
+      Diamond.test1, 5)
+    assertInterpretedEquals(
+      interpreter.evaluate(makeSelectTree(pkg, "Diamond", "test2")),
+      Diamond.test2, 3)
+    assertInterpretedEquals(
+      interpreter.evaluate(makeSelectTree(pkg, "Diamond", "test3")),
+      Diamond.test3, 2)
+  }
