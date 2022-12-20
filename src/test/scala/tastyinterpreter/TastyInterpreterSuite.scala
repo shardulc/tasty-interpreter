@@ -40,7 +40,7 @@ class TastyInterpreterSuite extends FunSuite:
 
   def assertInterpretedEquals[T](result: ScalaTerm, expectedScala: T, expectedManual: T)(using Location) =
     assert(clue(result.asInstanceOf[ScalaValueExtractor[T]].value) == clue(expectedScala))
-    assert(clue(result.asInstanceOf[ScalaValueExtractor[T]].value) == clue(expectedManual))
+    assert(clue(expectedScala) == clue(expectedManual))
 
   def makePackageName(names: String*) = FullyQualifiedName(names.map(termName).toList)
 

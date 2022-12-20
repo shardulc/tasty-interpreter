@@ -17,7 +17,7 @@ object Mixins:
     val bellModel = "Bell"
     def ring(): Sound
     def ringTwice() =
-      ring() + " " + ring()
+      ring().concat(" ").concat(ring())
 
   class ClownBike extends Bike, Bell:
     def ring() = "ploooeeey"
@@ -58,10 +58,10 @@ object Mixins:
   val broken1 = BrokenBike()
   broken1.shiftUp()
   broken1.pedal(10)
-  val test20 = road.getCurrentSpeed
+  val test20 = broken1.getCurrentSpeed
   broken1.shiftDown()
   broken1.pedal(10)
-  val test21 = road.getCurrentSpeed
+  val test21 = broken1.getCurrentSpeed
 
 
   trait BrokenGears extends Gears:

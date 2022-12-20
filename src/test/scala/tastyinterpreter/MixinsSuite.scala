@@ -77,10 +77,10 @@ class MixinsSuite extends TastyInterpreterSuite:
       Mixins.test41, 0)
     assertInterpretedEquals(
       interpreter.evaluate(makeSelectTree(pkg, "Mixins", "test42")),
-      Mixins.test42, 1)
+      Mixins.test42, 2)
     assertInterpretedEquals(
       interpreter.evaluate(makeSelectTree(pkg, "Mixins", "test43")),
-      Mixins.test43, 2)
+      Mixins.test43, 4)
     assertInterpretedEquals(
       interpreter.evaluate(makeSelectTree(pkg, "Mixins", "test44")),
       Mixins.test44, 2)
