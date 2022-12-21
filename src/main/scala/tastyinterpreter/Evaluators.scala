@@ -69,15 +69,22 @@ object Evaluators:
                   BuiltInMethod({ args =>
                     // this is the only place we have to resolve by name instead of symbol
                     // (can we avoid it?)
-                    val underlyingSimple = underlying match
-                      case ExpandedName(tag, prefix, name) => name
-                      case name: SimpleName => name
-                      case name @ _ => name.asSimpleName
-                    val method = obj.superObject.get.resolve(underlyingSimple).value match
-                      case m: ScalaApplicable => m
+                    val underlyingResolved = underlying match
+                      case ExpandedName(NameTags.EXPANDPREFIX, prefix, name) =>
+                        def findSuperObject(o: ScalaObject): ScalaObject =
+                          if o.linearization.head.asType.name.asSimpleName == name
+                          then o
+                          else findSuperObject(o.superObject.get)
+                        findSuperObject(obj).resolve(prefix)
+                      case _ =>
+                        obj.superObject.get.resolve(underlying match
+                          case ExpandedName(tag, prefix, name) => name
+                          case name: SimpleName => name
+                          case name @ _ => name.asSimpleName)
+                    underlyingResolved.value match
+                      case m: ScalaApplicable => m.apply(args)
                       case _ =>
                         throw TastyEvaluationError("super accessor must refer to method")
-                    method.apply(args)
                   })
                 }, t.symbol)
               case NameTags.INLINEACCESSOR =>
@@ -172,7 +179,7 @@ object Evaluators:
               evaluate(objEnv)(parent)
             else ScalaUnit()
 
-          tree.symbol.linearization
+          val superObject = tree.symbol.linearization
             .drop(1)
             .takeWhile(_.is(Flags.Trait))
             .reverse
@@ -208,7 +215,7 @@ object Evaluators:
               mixin
             }
 
-          uninstObj.superObject.set(parentObject)
+          uninstObj.superObject.set(superObject)
 
         // 4. specialize methods
         defDecls.foreach{ d =>
@@ -275,22 +282,18 @@ object Evaluators:
         val qualSymbol = TypeEvaluators.evaluate(env)(q.qualifier.toType) match
           case c: ScalaClass => c.symbol
           case _ => throw TastyEvaluationError("This() qualifier is not a class")
-        def findEnclosingObject(o: ScalaObject): ScalaObject =
-          if o.linearization.head == qualSymbol then o
-          else findEnclosingObject(o.superObject.get)
+        def findEnclosingObject(o: ScalaObject, target: ClassSymbol): ScalaObject =
+          if o.linearization.head == target then o
+          else findEnclosingObject(o.superObject.get, target)
         // evaluateThis finds the enclosing frame (object of subclass of qual),
         // then we find the enclosing object of class exactly qual
-        val encObj = findEnclosingObject(evaluateThis(env)(q))
+        val encObj = findEnclosingObject(evaluateThis(env)(q), qualSymbol)
         t.mix match
           case None => encObj.superObject.get
-          case Some(m) =>
-            val mixSymbol = TypeEvaluators.evaluate(env)(m.toType) match
+          case Some(mixin) =>
+            val mixinSymbol = TypeEvaluators.evaluate(env)(mixin.toType) match
               case c: ScalaClass => c.symbol
-              case _ =>
-                throw TastyEvaluationError("Super() mixin qualifier is not a class")
-            // TODO: not implemented yet! should be something like
-            // encObj.superObject.get.mixins.get(mixSymbol)
-            encObj.superObject.get
+            findEnclosingObject(encObj, mixinSymbol)
       case _ =>
         throw TastyEvaluationError(s"expecting Super.qual to be This, got ${t.qual}")
 

@@ -94,8 +94,33 @@ class MixinsSuite extends TastyInterpreterSuite:
       interpreter.evaluate(makeSelectTree(pkg, "Diamond", "test1")),
       Diamond.test1, 5)
     assertInterpretedEquals(
+      interpreter.evaluate(makeSelectTree(pkg, "Diamond", "test1Foo")),
+      Diamond.test1Foo, 3)
+    assertInterpretedEquals(
+      interpreter.evaluate(makeSelectTree(pkg, "Diamond", "test1Bar")),
+      Diamond.test1Bar, 5)
+    assertInterpretedEquals(
+      interpreter.evaluate(makeSelectTree(pkg, "Diamond", "test1Parent")),
+      Diamond.test1Parent, 2)
+    // expected fail due to tasty-query
+    // assertInterpretedEquals(
+    //   interpreter.evaluate(makeSelectTree(pkg, "Diamond", "test1Super")),
+    //   Diamond.test1Super, 5)
+    assertInterpretedEquals(
       interpreter.evaluate(makeSelectTree(pkg, "Diamond", "test2")),
       Diamond.test2, 3)
+    assertInterpretedEquals(
+      interpreter.evaluate(makeSelectTree(pkg, "Diamond", "test2Foo")),
+      Diamond.test2Foo, 3)
+    assertInterpretedEquals(
+      interpreter.evaluate(makeSelectTree(pkg, "Diamond", "test2Bar")),
+      Diamond.test2Bar, 5)
+    assertInterpretedEquals(
+      interpreter.evaluate(makeSelectTree(pkg, "Diamond", "test2Parent")),
+      Diamond.test2Parent, 2)
+    assertInterpretedEquals(
+      interpreter.evaluate(makeSelectTree(pkg, "Diamond", "test2Super")),
+      Diamond.test2Super, 3)
     assertInterpretedEquals(
       interpreter.evaluate(makeSelectTree(pkg, "Diamond", "test3")),
       Diamond.test3, 2)
