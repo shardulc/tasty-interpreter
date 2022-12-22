@@ -183,9 +183,10 @@ object Evaluators:
             .drop(1)
             .takeWhile(_.is(Flags.Trait))
             .reverse
-            .map(c => tree.rhs.parents.find(_ match
+            .collect({ (c: ClassSymbol) => tree.rhs.parents.drop(1).find(_ match
               case p: Apply =>
-                TypeEvaluators.evaluate(env)(p.tpe) match
+                if p.tpe.isSameType(defn.ObjectType) then false
+                else TypeEvaluators.evaluate(env)(p.tpe) match
                   case sc: ScalaClass => sc.symbol == c
                   case _ => false
               case _: Block => false
@@ -193,7 +194,7 @@ object Evaluators:
                 TypeEvaluators.evaluate(env)(p.toType) match
                   case sc: ScalaClass => sc.symbol == c
                   case _ => false
-                ).get)
+                )}.unlift)
             .collect {
               case p: Apply => p
               case p: TypeTree =>

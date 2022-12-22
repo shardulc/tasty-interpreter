@@ -96,7 +96,8 @@ class ScalaObject(env: => ScalaEnvironment,
   def resolve(symbol: TermSymbol)(using Context): ScalaBox[ScalaTerm] =
     environment.lookup(
       linearization
-        .collectFirst{ c => symbol.overridingSymbol(c) match { case Some(s) => s } }
+        .collectFirst{ c => symbol.overridingSymbolSubclassAgnostic(c)
+          match { case Some(s) => s } }
         .get.asTerm)
 
   def resolve(name: TermName)(using Context): ScalaBox[ScalaTerm] =
