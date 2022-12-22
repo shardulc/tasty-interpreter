@@ -102,10 +102,9 @@ class MixinsSuite extends TastyInterpreterSuite:
     assertInterpretedEquals(
       interpreter.evaluate(makeSelectTree(pkg, "Diamond", "test1Parent")),
       Diamond.test1Parent, 2)
-    // expected fail due to tasty-query
-    // assertInterpretedEquals(
-    //   interpreter.evaluate(makeSelectTree(pkg, "Diamond", "test1Super")),
-    //   Diamond.test1Super, 5)
+    assertInterpretedEquals(
+      interpreter.evaluate(makeSelectTree(pkg, "Diamond", "test1Super")),
+      Diamond.test1Super, 5)
     assertInterpretedEquals(
       interpreter.evaluate(makeSelectTree(pkg, "Diamond", "test2")),
       Diamond.test2, 3)
@@ -124,4 +123,34 @@ class MixinsSuite extends TastyInterpreterSuite:
     assertInterpretedEquals(
       interpreter.evaluate(makeSelectTree(pkg, "Diamond", "test3")),
       Diamond.test3, 2)
+  }
+
+  testWithInterpreter("double diamond problem") { interpreter =>
+    val pkg = makePackageName("testinputs", "inheritance")
+    interpreter.evaluateDeclarationsInPackage(pkg)
+
+    assertInterpretedEquals(
+      interpreter.evaluate(makeSelectTree(pkg, "Diamond", "testdd0Super")),
+      Diamond.testdd0Super, 7)
+    assertInterpretedEquals(
+      interpreter.evaluate(makeSelectTree(pkg, "Diamond", "testdd0AA")),
+      Diamond.testdd0AA, 5)
+    assertInterpretedEquals(
+      interpreter.evaluate(makeSelectTree(pkg, "Diamond", "testdd0AB")),
+      Diamond.testdd0AB, 11)
+    assertInterpretedEquals(
+      interpreter.evaluate(makeSelectTree(pkg, "Diamond", "testdd0BB")),
+      Diamond.testdd0BB, 7)
+    assertInterpretedEquals(
+      interpreter.evaluate(makeSelectTree(pkg, "Diamond", "testdd1Super")),
+      Diamond.testdd1Super, 11)
+    assertInterpretedEquals(
+      interpreter.evaluate(makeSelectTree(pkg, "Diamond", "testdd1AA")),
+      Diamond.testdd1AA, 5)
+    assertInterpretedEquals(
+      interpreter.evaluate(makeSelectTree(pkg, "Diamond", "testdd1AB")),
+      Diamond.testdd1AB, 11)
+    assertInterpretedEquals(
+      interpreter.evaluate(makeSelectTree(pkg, "Diamond", "testdd1BB")),
+      Diamond.testdd1BB, 7)
   }

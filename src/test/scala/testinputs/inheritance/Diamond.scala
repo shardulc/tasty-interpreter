@@ -41,3 +41,45 @@ object Diamond:
 
   val obj3 = Parent()
   val test3 = obj3.value
+
+
+  trait DoubleDiamondA:
+    def foo = 2
+
+  trait DoubleDiamondB:
+    def foo = 3
+
+  trait DoubleDiamondAA extends DoubleDiamondA:
+    override def foo = 5
+
+  trait DoubleDiamondBB extends DoubleDiamondB:
+    override def foo = 7
+
+  trait DoubleDiamondAB extends DoubleDiamondA, DoubleDiamondB:
+    override def foo = 11
+
+  class DoubleDiamondAAABBB extends DoubleDiamondAA, DoubleDiamondAB, DoubleDiamondBB:
+    override def foo = 13
+    def barSuper = super.foo
+    def barAA = super[DoubleDiamondAA].foo
+    def barAB = super[DoubleDiamondAB].foo
+    def barBB = super[DoubleDiamondBB].foo
+
+  class DoubleDiamondAABBAB extends DoubleDiamondAA, DoubleDiamondBB, DoubleDiamondAB:
+    override def foo = 13
+    def barSuper = super.foo
+    def barAA = super[DoubleDiamondAA].foo
+    def barAB = super[DoubleDiamondAB].foo
+    def barBB = super[DoubleDiamondBB].foo
+
+  val objdd0 = DoubleDiamondAAABBB()
+  val testdd0Super = objdd0.barSuper
+  val testdd0AA = objdd0.barAA
+  val testdd0AB = objdd0.barAB
+  val testdd0BB = objdd0.barBB
+
+  val objdd1 = DoubleDiamondAABBAB()
+  val testdd1Super = objdd1.barSuper
+  val testdd1AA = objdd1.barAA
+  val testdd1AB = objdd1.barAB
+  val testdd1BB = objdd1.barBB
