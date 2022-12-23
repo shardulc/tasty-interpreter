@@ -5,10 +5,11 @@ import tastyquery.Contexts.*
 
 object TypeEvaluators:
 
-  def evaluate(env: ScalaEnvironment)(tpe: Type)(using Context): ScalaEntity =
+  def evaluate(env: ScalaEnvironment)(tpe: Type)(using Context): ScalaType =
     tpe match
-      case (t: TermRef) => evaluatePrefix(env)(t.prefix).lookup(t.symbol).value
+      // case (t: TermRef) => evaluatePrefix(env)(t.prefix).lookup(t.symbol).value
       case (t: TypeRef) => evaluatePrefix(env)(t.prefix).lookup(t.symbol).value
+      case _ => throw TastyEvaluationError("must be TypeRef")
 
   def evaluatePrefix(env: ScalaEnvironment)(tpe: Prefix)(using Context): ScalaEnvironment =
     tpe match
