@@ -142,6 +142,9 @@ class MixinsSuite extends TastyInterpreterSuite:
       interpreter.evaluate(makeSelectTree(pkg, "Diamond", "testdd0BB")),
       Diamond.testdd0BB, 7)
     assertInterpretedEquals(
+      interpreter.evaluate(makeSelectTree(pkg, "Diamond", "testdd0baz")),
+      Diamond.testdd0baz, 11)
+    assertInterpretedEquals(
       interpreter.evaluate(makeSelectTree(pkg, "Diamond", "testdd1Super")),
       Diamond.testdd1Super, 11)
     assertInterpretedEquals(

@@ -54,6 +54,7 @@ object Diamond:
 
   trait DoubleDiamondBB extends DoubleDiamondB:
     override def foo = 7
+    def baz = super.foo
 
   trait DoubleDiamondAB extends DoubleDiamondA, DoubleDiamondB:
     override def foo = 11
@@ -64,6 +65,7 @@ object Diamond:
     def barAA = super[DoubleDiamondAA].foo
     def barAB = super[DoubleDiamondAB].foo
     def barBB = super[DoubleDiamondBB].foo
+    def bazSuper = super.baz
 
   class DoubleDiamondAABBAB extends DoubleDiamondAA, DoubleDiamondBB, DoubleDiamondAB:
     override def foo = 13
@@ -77,6 +79,7 @@ object Diamond:
   val testdd0AA = objdd0.barAA
   val testdd0AB = objdd0.barAB
   val testdd0BB = objdd0.barBB
+  val testdd0baz = objdd0.bazSuper
 
   val objdd1 = DoubleDiamondAABBAB()
   val testdd1Super = objdd1.barSuper
