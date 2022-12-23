@@ -179,8 +179,7 @@ object Evaluators:
             .collect(parentSymbolsToTrees)      // reorder parent Applys by linearization
             .foreach(evaluateApply(objEnv))
 
-          if uninstObj.runtimeClass == tree.symbol then
-            uninstObj.instantiated.set(true)
+        uninstObj.createNewEnvironments = true
 
         // 4. specialize methods
         defDecls.foreach{ d =>
@@ -198,6 +197,9 @@ object Evaluators:
         }
 
         // 6. return the now instantiated object
+        // only runtime class instantiation can mark the whole process as completed
+        if uninstObj.runtimeClass != tree.symbol then
+          uninstObj.createNewEnvironments = false
         uninstObj
     }}, tree.rhs.constr.symbol)
 
@@ -209,15 +211,7 @@ object Evaluators:
     TypeEvaluators.evaluate(env)(tree.tpe) match
       case cls: ScalaClass =>
         val obj =
-          // if thisObject exists:
-          //   if its superObj exists:
-          //     fully instantiated previous obj, should create new env
-          //   else:
-          //     we are in the middle of instantiating, use thisObject.env
-          // else:
-          //   fully instantiated previous obj, should create new env
-          // see comment in evaluateClassDef for more
-          if env.thisObject.isEmpty || env.thisObject.get.instantiated.get then
+          if env.thisObject.isEmpty || env.thisObject.get.createNewEnvironments then
             // lazy vals for mutual reference
             lazy val (newObjEnv: ScalaEnvironment, newObj: ScalaObject) =
               (ScalaEnvironment(Some(cls.environment), thisObj = Some(newObj)),

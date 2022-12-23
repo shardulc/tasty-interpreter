@@ -43,12 +43,6 @@ sealed trait ScalaTerm extends ScalaEntity:
 sealed trait ScalaType extends ScalaEntity
 
 case class ScalaBox[T](var value: T)
-class SetOnce[T](private var value: T):
-  private var isSet = false
-  def get = value
-  def set(v: T) =
-    if isSet then throw IllegalStateException("can only set value once")
-    else value = v
 
 class ScalaEnvironment(
     val parent: Option[ScalaEnvironment],
@@ -90,7 +84,7 @@ class ScalaClass(
 class ScalaObject(env: => ScalaEnvironment,
                   val runtimeClass: ClassSymbol) extends ScalaTerm:
   lazy val environment = env
-  val instantiated = SetOnce(false)
+  var createNewEnvironments = false
 
   def resolve(symbol: TermSymbol)
       (using Context): ScalaBox[ScalaTerm] =
