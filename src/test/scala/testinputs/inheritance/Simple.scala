@@ -32,3 +32,19 @@ object Simple:
   val obj4 = SimpleFooWithMultilevelSuperFields()
   val test6 = obj4.v      // 6 = 2*3
   val test7 = obj4.z      // 110 = 2*5*11
+
+
+  class Common(val bar: Int)
+
+  class Inner extends Common(5):
+    val foo = 2
+
+  class Outer extends Common(7):
+    val i = Inner()
+    val foo = 3
+
+  val obj5 = Outer()
+  val test8 = obj5.i.foo
+  val test9 = obj5.foo
+  val test10 = obj5.i.bar
+  val test11 = obj5.bar

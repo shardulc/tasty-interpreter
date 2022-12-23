@@ -196,3 +196,21 @@ class InheritanceSuite extends TastyInterpreterSuite:
       interpreter.evaluate(makeSelectTree(pkg, "Super", "test40")),
       Super.test40, 70)
   }
+
+    testWithInterpreter("instantiation inside constructor") { interpreter =>
+    val pkg = makePackageName("testinputs", "inheritance")
+    interpreter.evaluateDeclarationsInPackage(pkg)
+
+    assertInterpretedEquals(
+      interpreter.evaluate(makeSelectTree(pkg, "Simple", "test8")),
+      Simple.test8, 2)
+    assertInterpretedEquals(
+      interpreter.evaluate(makeSelectTree(pkg, "Simple", "test9")),
+      Simple.test9, 3)
+    assertInterpretedEquals(
+      interpreter.evaluate(makeSelectTree(pkg, "Simple", "test10")),
+      Simple.test10, 5)
+    assertInterpretedEquals(
+      interpreter.evaluate(makeSelectTree(pkg, "Simple", "test11")),
+      Simple.test11, 7)
+  }
