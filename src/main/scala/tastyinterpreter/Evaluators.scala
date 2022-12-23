@@ -68,44 +68,38 @@ object Evaluators:
       }.unlift)
 
     /*
-     * Suppose a class C has linearization L. Then instantiating an object of C
-     * will result in a new ScalaObject in the interpreter for each template in L,
-     * that all share the same ScalaEnvironment where their fields and methods are
-     * bound. The environment's thisObject will point to the 'bottom' ScalaObject,
-     * that is, the one corresponding to C. Each ScalaObject's superObject points
-     * to the ScalaObject of the "actual supertype", which is one step up in the
-     * linearization for traits and the proper parent class for non-traits.
+     * An object of class C is represented with a ScalaEnvironment and a ScalaObject
+     * with mutual references. The createNewEnvironments field of the object
+     * determines, at any point in time, whether a New node evaluated in that
+     * object's environment should create new environment-object pairs or not. In an
+     * instantiated ScalaObject, this field is always true. During instantiation, it
+     * is true during the evaluation of the body of a template, but false during the
+     * evaluation of parent constructors, because they should not create new
+     * ScalaObjects. The field is false for a fresh, uninstantiated ScalaObject.
      *
-     * Of course, the superObject pointer can only be initialized after the
-     * 'higher' object is instantiated and returned from its constructor. Thus
-     * there is a brief period between the creation of the 'bottom' ScalaObject
-     * and the conclusion of its parent constructors, and their parent constructors,
-     * etc., when its superObject is None. This is exactly the period in which
-     * evaluateNew does not create new object environments, but only new objects,
-     * using the environment of the 'bottom' object still being instantiated.
-     *
-     * Also note that each object has access to the 'bottom' object through
-     * thisObject, and thus knows its position in the linearization. This knowledge
-     * is used in the constructors.
-     *
-     * A constructor takes an uninstantiated object freshly created by evaluateNew
-     * and instantiates it with the following steps:
+     * The constructor of a class/trait C takes an uninstantiated object and
+     * instantiates the 'C' aspect of it with the following steps:
      *  1. Fields that access constructor arguments are bound in the object's
      *     environment to the values of those arguments. (They may be needed to
      *     call parent constructors, which happens before other fields are bound.)
      *  2. Other fields are initialized to null/false/zero/equivalent per their
      *     erased type. Lazy vals are initialized but not computed. Both these
      *     initializations are done for fields that are *not overridden* by an
-     *     object lower in the linearization. thisObject is used to access the
-     *     linearization of the 'bottom' object.
-     *  3. The parent constructors are evaluated in the object's environment and the
-     *     superObjects are set accordingly.
+     *     object lower in the linearization.
+     *  3. The parent constructors are evaluated in the object's environment.
+     *     Specifically, the concrete parent class constructor is evaluated (which
+     *     performs these steps recursively), and then the mixins are evaluated
+     *     (which do not recursively call any constructors). Finally,
+     *     createNewEnvironments is set to true.
      *  4. The class' methods, represented in the interpreter as ScalaSpecializables,
      *     are specialized to this object and bound in its environment.
      *  5. Inner classes and non-overridden fields are initialized. New bindings in
      *     the object's environment are created for inner classes while the bindings
      *     from step 2 are updated for fields.
-     *  6. The object is considered instantiated and is returned from the constructor.
+     *  6. createNewEnvironments is reset to false, unless the constructor being
+     *     evaluated was the 'lowest' constructor in the linearization, in which case
+     *     the object is instantiated and createNewEnvironments stays true (from #3).
+     *     In any case, the object is returned from the constructor.
      */
     val constructor = ScalaClassBuiltInMethod({ uninstObj =>
       BuiltInMethod[ScalaObject]{ arguments =>
@@ -144,7 +138,7 @@ object Evaluators:
               case ErasedTypeRef.ArrayTypeRef(_, _) => ScalaNull()
         }
 
-        // 3. eval parents in current object's environment and set superObject
+        // 3. eval parents in current object's environment
         if !tree.symbol.is(Flags.Trait) then
           val parent = tree.rhs.parents.head.asInstanceOf[Apply]
           if !parent.tpe.isSameType(defn.ObjectType) then
@@ -211,6 +205,7 @@ object Evaluators:
     TypeEvaluators.evaluate(env)(tree.tpe) match
       case cls: ScalaClass =>
         val obj =
+          // see comment in evaluateClassDef for explanation
           if env.thisObject.isEmpty || env.thisObject.get.createNewEnvironments then
             // lazy vals for mutual reference
             lazy val (newObjEnv: ScalaEnvironment, newObj: ScalaObject) =
