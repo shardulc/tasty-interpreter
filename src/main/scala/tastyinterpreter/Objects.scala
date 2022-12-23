@@ -10,6 +10,7 @@ import tastyquery.Symbols.*
 import tastyquery.Trees.*
 import tastyquery.Signatures.*
 import tastyquery.Flags
+import dotty.tools.tasty.TastyFormat.NameTags
 
 
 /*
@@ -42,14 +43,12 @@ sealed trait ScalaTerm extends ScalaEntity:
 sealed trait ScalaType extends ScalaEntity
 
 case class ScalaBox[T](var value: T)
-class SetOnce[T]:
-  private var value: Option[T] = None
-  def get = value.get
-  def isSet = value.isDefined
-  def isUnset = value.isEmpty
+class SetOnce[T](private var value: T):
+  private var isSet = false
+  def get = value
   def set(v: T) =
-    if isUnset then value = Some(v)
-    else throw IllegalStateException("can only set value once")
+    if isSet then throw IllegalStateException("can only set value once")
+    else value = v
 
 class ScalaEnvironment(
     val parent: Option[ScalaEnvironment],
@@ -89,25 +88,52 @@ class ScalaClass(
   extends ScalaType
 
 class ScalaObject(env: => ScalaEnvironment,
-                  val linearization: List[ClassSymbol]) extends ScalaTerm:
+                  val runtimeClass: ClassSymbol) extends ScalaTerm:
   lazy val environment = env
-  val superObject = SetOnce[ScalaObject]()
+  val instantiated = SetOnce(false)
 
-  def resolve(symbol: TermSymbol)(using Context): ScalaBox[ScalaTerm] =
-    environment.lookup(
-      linearization
-        .collectFirst{ c => symbol.overridingSymbolSubclassAgnostic(c)
-          match { case Some(s) => s } }
-        .get.asTerm)
+  def resolve(symbol: TermSymbol)
+      (using Context): ScalaBox[ScalaTerm] =
+    if Seq(
+        defn.IntClass,
+        defn.StringClass,
+        defn.Function0Class,
+        defn.BooleanClass,
+        defn.UnitClass).contains(runtimeClass) then
+      // TODO: actually dispatch these to the standard library
+      environment.lookup(symbol)
+    else
+      environment.lookup(
+        symbol.runtimeImplementingSymbol(runtimeClass))
 
-  def resolve(name: TermName)(using Context): ScalaBox[ScalaTerm] =
-    // this will only ever be called due to a super-accessor prefixed name
+  def resolveDynamicSuper(symbol: TermSymbol, from: ClassSymbol)
+      (using Context): ScalaBox[ScalaTerm] =
     environment.lookup(
-      linearization
-        // TODO: the first one is probably not the correct overload resolution
-        .map(_.getAllOverloadedDecls(name).headOption)
-        .collectFirst { case Some(s) => s }
-        .get)
+      symbol.nextSuperSymbol(runtimeClass, from))
+
+  def resolveStaticSuper(symbol: TermSymbol, from: ClassSymbol)
+      (using Context): ScalaBox[ScalaTerm] =
+    environment.lookup(symbol.runtimeImplementingSymbol(from))
+
+  def resolveSuperAccessor(name: PrefixedName, from: ClassSymbol)
+      (using Context): ScalaBox[ScalaTerm] =
+    name.underlying match
+      case ExpandedName(NameTags.EXPANDPREFIX, prefix, name) =>
+        val superClass = runtimeClass.linearization
+          .find(_.asType.name.asSimpleName == name).get
+        val underlyingSymbol = superClass.appliedRef.member(prefix).asTerm
+        resolveStaticSuper(underlyingSymbol, superClass)
+      case _ =>
+        val underlying = name.underlying match
+          case ExpandedName(_, _, name) => name
+          case name @ _ => name
+        // TODO: this is probably not the right way to get the underlying symbol
+        val underlyingSymbol = runtimeClass.linearization
+          .dropWhile(_ != from)
+          .collectFirst({ (c: ClassSymbol) =>
+            c.getAllOverloadedDecls(underlying).headOption }.unlift)
+          .get
+        resolveDynamicSuper(underlyingSymbol, from)
 
   override def forceValue()(using Context): ScalaObject = this
 
@@ -117,7 +143,7 @@ class ScalaLazyValue(valueDefinition: => ScalaObject)(using Context) extends Sca
   override def forceValue()(using Context): ScalaObject = value
 
 class ScalaFunctionObject(environment: ScalaEnvironment, method: ScalaMethod)(using Context)
-    extends ScalaObject(environment, defn.Function0Class.linearization):
+    extends ScalaObject(environment, defn.Function0Class):
   val applySymbol = defn.Function0Class.getAllOverloadedDecls(termName("apply")).head
   environment.update(applySymbol, BuiltInMethod { arguments  =>
     method.apply(arguments)(using ctx)
@@ -127,11 +153,11 @@ trait ScalaValueExtractor[T]:
   val value: T
 
 class ScalaBoolean(val value: Boolean)(using Context)
-    extends ScalaObject(ScalaEnvironment(None), defn.BooleanClass.linearization)
+    extends ScalaObject(ScalaEnvironment(None), defn.BooleanClass)
     with ScalaValueExtractor[Boolean]
 
 class ScalaInt(val value: Int)(using Context)
-    extends ScalaObject(ScalaEnvironment(None), defn.IntClass.linearization)
+    extends ScalaObject(ScalaEnvironment(None), defn.IntClass)
     with ScalaValueExtractor[Int]:
   private val cls = defn.IntClass
   val scalaIntName = cls.fullName
@@ -178,7 +204,7 @@ class ScalaInt(val value: Int)(using Context)
   })
 
 class ScalaString(val value: String)(using Context)
-    extends ScalaObject(ScalaEnvironment(None), defn.StringClass.linearization)
+    extends ScalaObject(ScalaEnvironment(None), defn.StringClass)
     with ScalaValueExtractor[String]:
   private val cls = defn.StringClass
   val scalaStringName = cls.fullName
@@ -192,10 +218,10 @@ class ScalaString(val value: String)(using Context)
   })
 
 case class ScalaUnit()(using Context)
-  extends ScalaObject(ScalaEnvironment(None), defn.UnitClass.linearization)
+  extends ScalaObject(ScalaEnvironment(None), defn.UnitClass)
 
 case class ScalaNull()(using Context)
-  extends ScalaObject(ScalaEnvironment(None), defn.NullClass.linearization)
+  extends ScalaObject(ScalaEnvironment(None), defn.NullClass)
 
 
 sealed trait ScalaApplicable extends ScalaTerm:

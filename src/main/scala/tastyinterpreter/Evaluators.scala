@@ -35,9 +35,10 @@ object Evaluators:
       case Literal(Constant(_: Unit)) => ScalaUnit()
       case Literal(Constant(null)) => ScalaNull()
       case t: This => evaluateThis(env)(t)
-      case t: Super => evaluateSuper(env)(t)
       case t: Assign => evaluateAssign(env)(t)
       case t: If => evaluateIf(env)(t)
+      case t: Super =>
+        throw TastyEvaluationError("Super should never be evaluated on its own")
       case t @ _ => throw TastyEvaluationError(s"not implemented for ${t.toString}")
 
 
@@ -50,49 +51,21 @@ object Evaluators:
 
     val defDecls = filterType[DefDef](tree.rhs.body)
       .filter(s => !s.symbol.is(Flags.Abstract) || s.symbol.is(Flags.Artifact))
-      .map { t =>
-        // TODO: handle constructor params that are
-        // not just a single list of term params
-        val valParams: List[ValDef] = t.paramLists match
-          case Left(p) :: _ => p
-          case _ => List.empty
+      .collect ({ (t: DefDef) =>
         t.name match
           case _: SimpleName =>
-            ScalaClassMethod(valParams.map(_.symbol), t.rhs.get, t.symbol)
-          case PrefixedName(tag, underlying) =>
-            tag match
-              case NameTags.SUPERACCESSOR =>
-                // super-accessors are artifact methods generated in circumstances
-                // such as the foo() method in class Inner in testinputs.inheritance.Super
-                // (accessing super of enclosing class)
-                ScalaClassBuiltInMethod({ obj =>
-                  BuiltInMethod({ args =>
-                    // this is the only place we have to resolve by name instead of symbol
-                    // (can we avoid it?)
-                    val underlyingResolved = underlying match
-                      case ExpandedName(NameTags.EXPANDPREFIX, prefix, name) =>
-                        def findSuperObject(o: ScalaObject): ScalaObject =
-                          if o.linearization.head.asType.name.asSimpleName == name
-                          then o
-                          else findSuperObject(o.superObject.get)
-                        findSuperObject(obj).resolve(prefix)
-                      case _ =>
-                        obj.superObject.get.resolve(underlying match
-                          case ExpandedName(tag, prefix, name) => name
-                          case name: SimpleName => name
-                          case name @ _ => name.asSimpleName)
-                    underlyingResolved.value match
-                      case m: ScalaApplicable => m.apply(args)
-                      case _ =>
-                        throw TastyEvaluationError("super accessor must refer to method")
-                  })
-                }, t.symbol)
-              case NameTags.INLINEACCESSOR =>
-                throw TastyEvaluationError("inline accessors not implemented yet")
-          case _ =>
-            throw TastyEvaluationError(
-              s"can't handle name ${t.name} : ${t.name.getClass} yet")
-      }
+            // TODO: handle constructor params that are
+            // not just a single list of term params
+            val valParams: List[ValDef] = t.paramLists match
+              case Left(p) :: _ => p
+              case _ => List.empty
+            Some(ScalaClassMethod(valParams.map(_.symbol), t.rhs.get, t.symbol))
+          case _: PrefixedName => None
+          //   this happens for superaccessor methods, which we don't bind at all
+          //   but instead look up their referent directly while evaluating Select
+          case n @ _ =>
+            throw TastyEvaluationError(s"can't handle name $n of type ${n.getClass}")
+      }.unlift)
 
     /*
      * Suppose a class C has linearization L. Then instantiating an object of C
@@ -151,7 +124,7 @@ object Evaluators:
         val valsToInit = valDecls
           .filterNot(_.symbol.is(Flags.ParamAccessor))
           .filterNot(t =>
-            objEnv.thisObject.get.linearization
+            objEnv.thisObject.get.runtimeClass.linearization
               .takeWhile(c => c != tree.symbol)
               .map(c => t.symbol.overridingSymbol(c))
               .exists(_.isDefined))
@@ -174,49 +147,40 @@ object Evaluators:
         // 3. eval parents in current object's environment and set superObject
         if !tree.symbol.is(Flags.Trait) then
           val parent = tree.rhs.parents.head.asInstanceOf[Apply]
-          val parentObject =
-            if !parent.tpe.isSameType(defn.ObjectType) then
-              evaluate(objEnv)(parent)
-            else ScalaUnit()
+          if !parent.tpe.isSameType(defn.ObjectType) then
+            evaluate(objEnv)(parent)
 
-          val superObject = tree.symbol.linearization
-            .drop(1)
-            .takeWhile(_.is(Flags.Trait))
-            .reverse
-            .collect({ (c: ClassSymbol) => tree.rhs.parents.drop(1).find(_ match
-              case p: Apply =>
-                if p.tpe.isSameType(defn.ObjectType) then false
-                else TypeEvaluators.evaluate(env)(p.tpe) match
-                  case sc: ScalaClass => sc.symbol == c
-                  case _ => false
-              case _: Block => false
-              case p: TypeTree =>
-                TypeEvaluators.evaluate(env)(p.toType) match
-                  case sc: ScalaClass => sc.symbol == c
-                  case _ => false
-                )}.unlift)
+          val parentSymbolsToTrees = tree.rhs.parents
+            .drop(1)    // drop concrete parent, evaluated above
             .collect {
-              case p: Apply => p
-              case p: TypeTree =>
-                val mixinSymbol = TypeEvaluators.evaluate(env)(p.toType) match
-                  case c: ScalaClass => c.symbol
+              case t: Apply if !t.tpe.isSameType(defn.ObjectType) =>
+                TypeEvaluators.evaluate(env)(t.tpe) match
+                  case sc: ScalaClass => (sc.symbol, t)
+              case t: TypeTree =>
+                val mixinSymbol = TypeEvaluators.evaluate(env)(t.toType) match
+                  case sc: ScalaClass => sc.symbol
                 val mixinInitSymbol = mixinSymbol
                   .findDecl(SignedName(
                     termName("<init>"),
                     Signature(List.empty, mixinSymbol.fullName)))
                   .signedName
                   .toTermName
-                Apply(Select(New(p)(NoSpan), mixinInitSymbol)
-                  (Some(p.toType.asInstanceOf[TypeRef]))
-                  (NoSpan), List.empty)(NoSpan)
+                (mixinSymbol,
+                 Apply(Select(New(t)(NoSpan), mixinInitSymbol)
+                   (Some(t.toType.asInstanceOf[TypeRef]))
+                   (NoSpan), List.empty)(NoSpan))
             }
-            .foldLeft(parentObject) { (higher, apply) =>
-              val mixin = evaluateApply(objEnv)(apply)
-              mixin.superObject.set(higher)
-              mixin
-            }
+            .toMap
 
-          uninstObj.superObject.set(superObject)
+          tree.symbol.linearization
+            .drop(1)                            // drop self
+            .takeWhile(_.is(Flags.Trait))       // take until concrete parent
+            .reverse                            // evaluation happens in reverse
+            .collect(parentSymbolsToTrees)      // reorder parent Applys by linearization
+            .foreach(evaluateApply(objEnv))
+
+          if uninstObj.runtimeClass == tree.symbol then
+            uninstObj.instantiated.set(true)
 
         // 4. specialize methods
         defDecls.foreach{ d =>
@@ -253,50 +217,25 @@ object Evaluators:
           // else:
           //   fully instantiated previous obj, should create new env
           // see comment in evaluateClassDef for more
-          if env.thisObject.isEmpty || env.thisObject.get.superObject.isSet then
+          if env.thisObject.isEmpty || env.thisObject.get.instantiated.get then
             // lazy vals for mutual reference
             lazy val (newObjEnv: ScalaEnvironment, newObj: ScalaObject) =
               (ScalaEnvironment(Some(cls.environment), thisObj = Some(newObj)),
-               ScalaObject(newObjEnv, cls.symbol.linearization))
+               ScalaObject(newObjEnv, cls.symbol))
             newObj
-          else ScalaObject(
-            env.thisObject.get.environment,
-            env.thisObject.get.linearization.dropWhile(_ != cls.symbol))
+          else env.thisObject.get
         obj.environment(cls.constructor.symbol) = cls.constructor.specialize(obj)
         obj
-      case _ => throw TastyEvaluationError("don't know how to init this")
 
   def evaluateThis(env: ScalaEnvironment)(t: This)(using Context): ScalaObject =
     val qualSymbol = TypeEvaluators.evaluate(env)(t.qualifier.toType) match
       case c: ScalaClass => c.symbol
-      case _ => throw TastyEvaluationError("This() qualifier is not a class")
     def findEnclosingFrame(e: ScalaEnvironment): ScalaObject =
-      if e.thisObject.get.linearization.contains(qualSymbol) then
+      if e.thisObject.get.runtimeClass.isSubclass(qualSymbol) then
         e.thisObject.get
       // remember: e.parent is the enclosing frame, not the super object!
       else findEnclosingFrame(e.parent.get)
     findEnclosingFrame(env)
-
-  def evaluateSuper(env: ScalaEnvironment)(t: Super)(using Context): ScalaObject =
-    t.qual match
-      case q: This =>
-        val qualSymbol = TypeEvaluators.evaluate(env)(q.qualifier.toType) match
-          case c: ScalaClass => c.symbol
-          case _ => throw TastyEvaluationError("This() qualifier is not a class")
-        def findEnclosingObject(o: ScalaObject, target: ClassSymbol): ScalaObject =
-          if o.linearization.head == target then o
-          else findEnclosingObject(o.superObject.get, target)
-        // evaluateThis finds the enclosing frame (object of subclass of qual),
-        // then we find the enclosing object of class exactly qual
-        val encObj = findEnclosingObject(evaluateThis(env)(q), qualSymbol)
-        t.mix match
-          case None => encObj.superObject.get
-          case Some(mixin) =>
-            val mixinSymbol = TypeEvaluators.evaluate(env)(mixin.toType) match
-              case c: ScalaClass => c.symbol
-            findEnclosingObject(encObj, mixinSymbol)
-      case _ =>
-        throw TastyEvaluationError(s"expecting Super.qual to be This, got ${t.qual}")
 
   def evaluateValDef(env: ScalaEnvironment)(tree: ValDef)(using Context): ScalaUnit =
     def evaledRhs = evaluate(env)(tree.rhs.get)
@@ -368,5 +307,17 @@ object Evaluators:
           case ps: PackageSymbol => throw TastyEvaluationError("can't do packages yet")
       case t: Select =>
         t.symbol match
-          case ts: TermSymbol => evaluate(env)(t.qualifier).resolve(ts)
+          case ts: TermSymbol =>
+            t.qualifier match
+              case Super(qual: This, None) => evaluateThis(env)(qual)
+                .resolveDynamicSuper(ts, from = qual.tpe.asInstanceOf[ThisType].cls)
+              case Super(qual: This, Some(mixin)) =>
+                val mixinSymbol = TypeEvaluators.evaluate(env)(mixin.toType) match
+                  case c: ScalaClass => c.symbol
+                evaluateThis(env)(qual).resolveStaticSuper(ts, mixinSymbol)
+              case qual: This if ts.name.isInstanceOf[PrefixedName] =>
+                evaluateThis(env)(qual).resolveSuperAccessor(
+                  ts.name.asInstanceOf[PrefixedName],
+                  qual.tpe.asInstanceOf[ThisType].cls)
+              case _ => evaluate(env)(t.qualifier).resolve(ts)
           case ps: PackageSymbol => throw TastyEvaluationError("can't do packages yet")
