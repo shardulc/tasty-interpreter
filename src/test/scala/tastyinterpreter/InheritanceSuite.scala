@@ -202,15 +202,35 @@ class InheritanceSuite extends TastyInterpreterSuite:
     interpreter.evaluateDeclarationsInPackage(pkg)
 
     assertInterpretedEquals(
-      interpreter.evaluate(makeSelectTree(pkg, "Simple", "test8")),
-      Simple.test8, 2)
+      interpreter.evaluate(makeSelectTree(pkg, "NestedConstructors", "test0_1")),
+      NestedConstructors.test0_1, 2)
     assertInterpretedEquals(
-      interpreter.evaluate(makeSelectTree(pkg, "Simple", "test9")),
-      Simple.test9, 3)
+      interpreter.evaluate(makeSelectTree(pkg, "NestedConstructors", "test0_2")),
+      NestedConstructors.test0_2, 3)
     assertInterpretedEquals(
-      interpreter.evaluate(makeSelectTree(pkg, "Simple", "test10")),
-      Simple.test10, 5)
+      interpreter.evaluate(makeSelectTree(pkg, "NestedConstructors", "test0_3")),
+      NestedConstructors.test0_3, 5)
     assertInterpretedEquals(
-      interpreter.evaluate(makeSelectTree(pkg, "Simple", "test11")),
-      Simple.test11, 7)
+      interpreter.evaluate(makeSelectTree(pkg, "NestedConstructors", "test0_4")),
+      NestedConstructors.test0_4, 7)
+
+    assertInterpretedEquals(
+      interpreter.evaluate(makeSelectTree(pkg, "NestedConstructors", "test1_0")),
+      NestedConstructors.test1_0, 11)
+    assertInterpretedEquals(
+      interpreter.evaluate(makeSelectTree(pkg, "NestedConstructors", "test1_1")),
+      NestedConstructors.test1_1, 2)
+    assertInterpretedEquals(
+      interpreter.evaluate(makeSelectTree(pkg, "NestedConstructors", "test1_2")),
+      NestedConstructors.test1_2, 2)
+    assertInterpretedEquals(
+      interpreter.evaluate(makeSelectTree(pkg, "NestedConstructors", "test1_3")),
+      NestedConstructors.test1_3, 5)
+
+    assertInterpretedEquals(
+      interpreter.evaluate(makeSelectTree(pkg, "NestedConstructors", "test2_0")),
+      NestedConstructors.test2_0, 3)
+    assertInterpretedEquals(
+      interpreter.evaluate(makeSelectTree(pkg, "NestedConstructors", "test2_1")),
+      NestedConstructors.test2_1, 3)
   }

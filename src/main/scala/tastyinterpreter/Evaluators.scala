@@ -18,31 +18,32 @@ class TastyEvaluationError(m: String) extends RuntimeException(m)
 
 object Evaluators:
 
-  def evaluate(env: ScalaEnvironment)(tree: Tree)(using Context): ScalaObject =
+  def evaluate(env: ScalaEnvironment, tree: Tree, constructingParent: Boolean = false)(using Context): ScalaObject =
+    val cp = constructingParent
     tree match
-      case t: ClassDef => evaluateClassDef(env)(t)
-      case t: New => evaluateNew(env)(t)
-      case t: ValDef => evaluateValDef(env)(t)
-      case t: DefDef => evaluateDefDef(env)(t)
-      case t: Block => evaluateBlock(env)(t)
-      case t: Apply => evaluateApply(env)(t)
-      case t: Lambda => evaluateLambda(env)(t)
-      case t: (Ident | Select) => evaluateIdentSelect(env)(t)
-      case Typed(t, _) => evaluate(env)(t)
+      case t: ClassDef => evaluateClassDef(env, t, cp)
+      case t: New => evaluateNew(env, t, cp)
+      case t: ValDef => evaluateValDef(env, t, cp)
+      case t: DefDef => evaluateDefDef(env, t, cp)
+      case t: Block => evaluateBlock(env, t, cp)
+      case t: Apply => evaluateApply(env, t, cp)
+      case t: Lambda => evaluateLambda(env, t, cp)
+      case t: (Ident | Select) => evaluateIdentSelect(env, t, cp)
+      case Typed(t, _) => evaluate(env, t, cp)
       case Literal(Constant(t: Int)) => ScalaInt(t)
       case Literal(Constant(t: String)) => ScalaString(t)
       case Literal(Constant(t: Boolean)) => ScalaBoolean(t)
       case Literal(Constant(_: Unit)) => ScalaUnit()
       case Literal(Constant(null)) => ScalaNull()
-      case t: This => evaluateThis(env)(t)
-      case t: Assign => evaluateAssign(env)(t)
-      case t: If => evaluateIf(env)(t)
+      case t: This => evaluateThis(env, t, cp)
+      case t: Assign => evaluateAssign(env, t, cp)
+      case t: If => evaluateIf(env, t, cp)
       case t: Super =>
         throw TastyEvaluationError("Super should never be evaluated on its own")
       case t @ _ => throw TastyEvaluationError(s"not implemented for ${t.toString}")
 
 
-  def evaluateClassDef(env: ScalaEnvironment)(tree: ClassDef)(using Context): ScalaUnit =
+  def evaluateClassDef(env: ScalaEnvironment, tree: ClassDef, constructingParent: Boolean)(using Context): ScalaUnit =
 
     inline def filterType[U <: Tree](l: Iterable[Tree]): Iterable[U] =
       l.flatMap((_: @unchecked) match { case u: U => List(u); case _ => List.empty })
@@ -126,7 +127,7 @@ object Evaluators:
 
         valsToInit.foreach { v =>
           if v.symbol.is(Flags.Lazy) then
-            evaluateValDef(objEnv)(v)
+            evaluateValDef(objEnv, v, cp = false)
           else
             val vType = v.symbol.declaredType
             val vErasedType = ErasedTypeRef.erase(vType)
@@ -138,11 +139,15 @@ object Evaluators:
               case ErasedTypeRef.ArrayTypeRef(_, _) => ScalaNull()
         }
 
+        // 4. specialize methods
+        defDecls.foreach{ d =>
+          objEnv(d.symbol) = d.specialize(uninstObj) }
+
         // 3. eval parents in current object's environment
         if !tree.symbol.is(Flags.Trait) then
           val parent = tree.rhs.parents.head.asInstanceOf[Apply]
           if !parent.tpe.isSameType(defn.ObjectType) then
-            evaluate(objEnv)(parent)
+            evaluateApplyParent(objEnv, parent)
 
           val parentSymbolsToTrees = tree.rhs.parents
             .drop(1)    // drop concrete parent, evaluated above
@@ -171,29 +176,20 @@ object Evaluators:
             .takeWhile(_.is(Flags.Trait))       // take until concrete parent
             .reverse                            // evaluation happens in reverse
             .collect(parentSymbolsToTrees)      // reorder parent Applys by linearization
-            .foreach(evaluateApply(objEnv))
-
-        uninstObj.createNewEnvironments = true
-
-        // 4. specialize methods
-        defDecls.foreach{ d =>
-          objEnv(d.symbol) = d.specialize(uninstObj) }
+            .foreach(evaluateApplyParent(objEnv, _))
 
         // 5. bind inner classes and non-overridden fields and evaluate
         //    non-defining statements in the right order
-        classDecls.foreach(evaluateClassDef(objEnv))
+        classDecls.foreach(evaluateClassDef(objEnv, _, false))
         tree.rhs.body.foreach { _ match
           case stat: ValDef =>
-            if valsToInit.contains(stat) then evaluateValDef(objEnv)(stat)
+            if valsToInit.contains(stat) then evaluateValDef(objEnv, stat, false)
           case _: DefTree => ()
           case stat @ _ =>
-            evaluate(objEnv)(stat)
+            evaluate(objEnv, stat, false)
         }
 
         // 6. return the now instantiated object
-        // only runtime class instantiation can mark the whole process as completed
-        if uninstObj.runtimeClass != tree.symbol then
-          uninstObj.createNewEnvironments = false
         uninstObj
     }}, tree.rhs.constr.symbol)
 
@@ -201,12 +197,12 @@ object Evaluators:
     ScalaUnit()
 
 
-  def evaluateNew(env: ScalaEnvironment)(tree: New)(using Context): ScalaObject =
+  def evaluateNew(env: ScalaEnvironment, tree: New, constructingParent: Boolean)(using Context): ScalaObject =
     TypeEvaluators.evaluate(env)(tree.tpe) match
       case cls: ScalaClass =>
         val obj =
           // see comment in evaluateClassDef for explanation
-          if env.thisObject.isEmpty || env.thisObject.get.createNewEnvironments then
+          if env.thisObject.isEmpty || !constructingParent then
             // lazy vals for mutual reference
             lazy val (newObjEnv: ScalaEnvironment, newObj: ScalaObject) =
               (ScalaEnvironment(Some(cls.environment), thisObj = Some(newObj)),
@@ -216,8 +212,8 @@ object Evaluators:
         obj.environment(cls.constructor.symbol) = cls.constructor.specialize(obj)
         obj
 
-  def evaluateThis(env: ScalaEnvironment)(t: This)(using Context): ScalaObject =
-    val qualSymbol = TypeEvaluators.evaluate(env)(t.qualifier.toType) match
+  def evaluateThis(env: ScalaEnvironment, tree: This, cp: Boolean)(using Context): ScalaObject =
+    val qualSymbol = TypeEvaluators.evaluate(env)(tree.qualifier.toType) match
       case c: ScalaClass => c.symbol
     def findEnclosingFrame(e: ScalaEnvironment): ScalaObject =
       if e.thisObject.get.runtimeClass.isSubclass(qualSymbol) then
@@ -226,22 +222,22 @@ object Evaluators:
       else findEnclosingFrame(e.parent.get)
     findEnclosingFrame(env)
 
-  def evaluateValDef(env: ScalaEnvironment)(tree: ValDef)(using Context): ScalaUnit =
-    def evaledRhs = evaluate(env)(tree.rhs.get)
+  def evaluateValDef(env: ScalaEnvironment, tree: ValDef, cp: Boolean)(using Context): ScalaUnit =
+    def evaledRhs = evaluate(env, tree.rhs.get, cp)
     env(tree.symbol) =
       if tree.symbol.is(Flags.Lazy) then ScalaLazyValue(evaledRhs)
       else evaledRhs
     ScalaUnit()
 
-  def evaluateAssign(env: ScalaEnvironment)(tree: Assign)(using Context): ScalaUnit =
+  def evaluateAssign(env: ScalaEnvironment, tree: Assign, cp: Boolean)(using Context): ScalaUnit =
     tree.lhs match
       case lhs: (Ident | Select) =>
-        evaluateNonForcedIdentSelect(env)(lhs).value = evaluate(env)(tree.rhs)
+        evaluateNonForcedIdentSelect(env, lhs, cp).value = evaluate(env, tree.rhs, cp)
       case lhs @ _ =>
         throw TastyEvaluationError(s"don't know how to assign to ${lhs.getClass}")
     ScalaUnit()
 
-  def evaluateDefDef(env: ScalaEnvironment)(tree: DefDef)
+  def evaluateDefDef(env: ScalaEnvironment, tree: DefDef, cp: Boolean)
       (using Context): ScalaUnit =
     if tree.name != SimpleName("writeReplace") then
       // assume only one, val params clause for now
@@ -251,25 +247,35 @@ object Evaluators:
       env(tree.symbol) = ScalaMethod(env, valParams.map(_.symbol), tree.rhs.get)
     ScalaUnit()
 
-  def evaluateBlock(env: ScalaEnvironment)(tree: Block)(using Context): ScalaObject =
-    tree.stats.foreach(evaluate(env))
-    evaluate(env)(tree.expr)
+  def evaluateBlock(env: ScalaEnvironment, tree: Block, cp: Boolean)(using Context): ScalaObject =
+    tree.stats.foreach(evaluate(env, _, cp))
+    evaluate(env, tree.expr, cp)
 
-  def evaluateApply(env: ScalaEnvironment)(tree: Apply)(using Context): ScalaObject =
+  def evaluateApply(env: ScalaEnvironment, tree: Apply, cp: Boolean)(using Context): ScalaObject =
     // ignore possibility of call-by-name
     tree.fun match
       case fun: (Ident | Select) =>
-        evaluateNonForcedIdentSelect(env)(fun).value match
-          case f: ScalaApplicable => f.apply(tree.args.map(evaluate(env)))
+        evaluateNonForcedIdentSelect(env, fun, cp).value match
+          case f: ScalaApplicable => f.apply(tree.args.map(evaluate(env, _, cp)), cp)
           case f @ _ => throw TastyEvaluationError(s"can't apply ${f}")
       case fun @ _ =>
         throw TastyEvaluationError(s"don't know how to apply ${fun.getClass}")
 
-  def evaluateLambda(env: ScalaEnvironment)(tree: Lambda)
+  def evaluateApplyParent(env: ScalaEnvironment, tree: Apply)(using Context): ScalaObject =
+    // ignore possibility of call-by-name
+    tree.fun match
+      case fun: (Ident | Select) =>
+        evaluateNonForcedIdentSelect(env, fun, true).value match
+          case f: ScalaApplicable => f.apply(tree.args.map(evaluate(env, _, false)), true)
+          case f @ _ => throw TastyEvaluationError(s"can't apply ${f}")
+      case fun @ _ =>
+        throw TastyEvaluationError(s"don't know how to apply ${fun.getClass}")
+
+  def evaluateLambda(env: ScalaEnvironment, tree: Lambda, cp: Boolean)
       (using Context): ScalaFunctionObject =
     tree.meth match
       case meth: (Ident | Select) =>
-        val method = evaluateNonForcedIdentSelect(env)(meth).value match
+        val method = evaluateNonForcedIdentSelect(env, meth, cp).value match
           case m: ScalaMethod => m
           case m =>
             throw TastyEvaluationError(s"Lambda must refer to method, not ${m.getClass}")
@@ -277,17 +283,17 @@ object Evaluators:
       case meth @ _ =>
         throw TastyEvaluationError(s"Lambda must refer to method, not ${meth.getClass}")
 
-  def evaluateIf(env: ScalaEnvironment)(tree: If)(using Context): ScalaObject =
-    if evaluate(env)(tree.cond).asInstanceOf[ScalaValueExtractor[Boolean]].value then
-      evaluate(env)(tree.thenPart)
+  def evaluateIf(env: ScalaEnvironment, tree: If, cp: Boolean)(using Context): ScalaObject =
+    if evaluate(env, tree.cond, cp).asInstanceOf[ScalaValueExtractor[Boolean]].value then
+      evaluate(env, tree.thenPart, cp)
     else
-      evaluate(env)(tree.elsePart)
+      evaluate(env, tree.elsePart, cp)
 
-  def evaluateIdentSelect(env: ScalaEnvironment)(tree: Ident | Select)
+  def evaluateIdentSelect(env: ScalaEnvironment, tree: Ident | Select, cp: Boolean)
       (using Context): ScalaObject =
-    evaluateNonForcedIdentSelect(env)(tree).value.forceValue()
+    evaluateNonForcedIdentSelect(env, tree, cp).value.forceValue()
 
-  def evaluateNonForcedIdentSelect(env: ScalaEnvironment)(tree: Ident | Select)
+  def evaluateNonForcedIdentSelect(env: ScalaEnvironment, tree: Ident | Select, cp: Boolean)
       (using Context): ScalaBox[ScalaTerm] =
     tree match
       case t: Ident =>
@@ -298,15 +304,15 @@ object Evaluators:
         t.symbol match
           case ts: TermSymbol =>
             t.qualifier match
-              case Super(qual: This, None) => evaluateThis(env)(qual)
+              case Super(qual: This, None) => evaluateThis(env, qual, cp)
                 .resolveDynamicSuper(ts, from = qual.tpe.asInstanceOf[ThisType].cls)
               case Super(qual: This, Some(mixin)) =>
                 val mixinSymbol = TypeEvaluators.evaluate(env)(mixin.toType) match
                   case c: ScalaClass => c.symbol
-                evaluateThis(env)(qual).resolveStaticSuper(ts, mixinSymbol)
+                evaluateThis(env, qual, cp).resolveStaticSuper(ts, mixinSymbol)
               case qual: This if ts.name.isInstanceOf[PrefixedName] =>
-                evaluateThis(env)(qual).resolveSuperAccessor(
+                evaluateThis(env, qual, cp).resolveSuperAccessor(
                   ts.name.asInstanceOf[PrefixedName],
                   qual.tpe.asInstanceOf[ThisType].cls)
-              case _ => evaluate(env)(t.qualifier).resolve(ts)
+              case _ => evaluate(env, t.qualifier, cp).resolve(ts)
           case ps: PackageSymbol => throw TastyEvaluationError("can't do packages yet")

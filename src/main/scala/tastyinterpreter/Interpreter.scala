@@ -10,7 +10,7 @@ class Interpreter(using Context):
   val ctx = tastyquery.Contexts.ctx
 
   def evaluate(tree: Tree) =
-    Evaluators.evaluate(topLevelEnv)(tree)
+    Evaluators.evaluate(topLevelEnv, tree)
 
   def evaluateDeclarationsInPackage(packageName: FullyQualifiedName) =
     ctx.findPackageFromRoot(packageName).asPackage.declarations

@@ -84,7 +84,6 @@ class ScalaClass(
 class ScalaObject(env: => ScalaEnvironment,
                   val runtimeClass: ClassSymbol) extends ScalaTerm:
   lazy val environment = env
-  var createNewEnvironments = false
 
   def resolve(symbol: TermSymbol)
       (using Context): ScalaBox[ScalaTerm] =
@@ -219,21 +218,21 @@ case class ScalaNull()(using Context)
 
 
 sealed trait ScalaApplicable extends ScalaTerm:
-  def apply(arguments: List[ScalaTerm])(using Context): ScalaObject
+  def apply(arguments: List[ScalaTerm], cp: Boolean = false)(using Context): ScalaObject
   override def forceValue()(using Context): ScalaObject = apply(List.empty)
 
 class ScalaMethod(
     parent: ScalaEnvironment,
     parameters: List[TermSymbol],
     body: Tree) extends ScalaApplicable:
-  override def apply(arguments: List[ScalaTerm])(using Context): ScalaObject =
+  override def apply(arguments: List[ScalaTerm], constructingParent: Boolean = false)(using Context): ScalaObject =
     val callEnvironment = ScalaEnvironment(Some(parent))
     callEnvironment.bindAll(parameters.zip(arguments))
-    Evaluators.evaluate(callEnvironment)(body)
+    Evaluators.evaluate(callEnvironment, body, constructingParent)
 
 class BuiltInMethod[T <: ScalaObject]
     (underlying: List[ScalaTerm] => Context ?=> T) extends ScalaApplicable:
-  override def apply(arguments: List[ScalaTerm])(using Context): T =
+  override def apply(arguments: List[ScalaTerm], cp: Boolean = false)(using Context): T =
     underlying(arguments)
 
 
