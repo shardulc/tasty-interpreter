@@ -1,4 +1,4 @@
-package testinputs.otherbasic
+package testinputs.basic
 
 class Bar(x: Int):
   class Baz:

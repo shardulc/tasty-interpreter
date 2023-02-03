@@ -7,7 +7,6 @@ import tastyquery.Spans.NoSpan
 import tastyquery.Types.*
 
 import testinputs.basic
-import testinputs.otherbasic
 
 class BasicSuite extends TastyInterpreterSuite:
 
@@ -29,13 +28,13 @@ class BasicSuite extends TastyInterpreterSuite:
   }
 
   testWithInterpreter("inner class") { interpreter =>
-    val basicPkg = makePackageName("testinputs", "otherbasic")
+    val basicPkg = makePackageName("testinputs", "basic")
     interpreter.evaluateDeclarationsInPackage(basicPkg)
 
     assertInterpretedEquals(
       interpreter.evaluate(
         Apply(makeSelectTree(basicPkg, "Foobar", "doit"), List.empty)(NoSpan)),
-      otherbasic.Foobar.doit,
+      basic.Foobar.doit,
       7)
   }
 
