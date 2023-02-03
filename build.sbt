@@ -4,7 +4,7 @@ val rtJarOpt = taskKey[Option[String]]("Path to rt.jar if it exists")
 val javalibEntry = taskKey[String]("Path to rt.jar or \"jrt:/\"")
 
 lazy val commonSettings = Seq(
-  scalaVersion := "3.1.3",
+  scalaVersion := "3.2.0",
   Global / onChangedBuildSource := ReloadOnSourceChanges
 )
 
@@ -15,7 +15,7 @@ lazy val root = (project in file("."))
     scalaJSUseMainModuleInitializer := true,
     scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
 
-    libraryDependencies += "ch.epfl.scala" %%% "tasty-query" % "0.5.5+1-39761ade-SNAPSHOT",
+    libraryDependencies += "ch.epfl.scala" %%% "tasty-query" % "0.5.7",
     libraryDependencies += "org.scalameta" %%% "munit" % "0.7.29" % Test,
 
     Test / sourceGenerators += Def.task {
@@ -24,6 +24,7 @@ lazy val root = (project in file("."))
       val cpList = "List(" + (Compile / managedClasspath).value.seq
         .map(_.data.absolutePath)
         .+:((Test / javalibEntry).value)
+        .+:((Test / classDirectory).value.absolutePath)
         .map(s => s"${q}${s}${q}")
         .reduce((s1, s2) => s"${s1}, ${s2}") + ")"
       IO.write(file, s"""

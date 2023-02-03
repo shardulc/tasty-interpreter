@@ -15,13 +15,9 @@ import tastyquery.Trees.*
 import tastyquery.Spans.NoSpan
 import tastyquery.Types.*
 
-import tastyinterpreter.generated.TestClasspaths
+import tastyinterpreter.generated.TestClasspaths.classpaths
 
 class TastyInterpreterSuite extends FunSuite:
-
-  val classpaths = TestClasspaths.classpaths ++ List(
-    "target/scala-3.1.3/test-classes/"
-  )
 
   val clspth = new Fixture[Future[Classpath]]("classpath") {
     private var clspth: Future[Classpath] = null
