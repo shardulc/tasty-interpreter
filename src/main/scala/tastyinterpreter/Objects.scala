@@ -85,6 +85,15 @@ class ScalaObject(env: => ScalaEnvironment,
                   val runtimeClass: ClassSymbol) extends ScalaTerm:
   lazy val environment = env
 
+  private def resolveCommon(linearization: Seq[ClassSymbol], symbol: TermSymbol)
+      (using Context): ScalaBox[ScalaTerm] =
+    environment.lookup(linearization
+      .collectFirst({ (c: ClassSymbol) => symbol
+          .matchingSymbol(c, runtimeClass)
+          .filter(s => s.name == nme.Constructor || !s.is(Flags.Abstract)) }
+        .unlift)
+      .get.asTerm)
+
   def resolve(symbol: TermSymbol)
       (using Context): ScalaBox[ScalaTerm] =
     if Seq(
@@ -96,29 +105,36 @@ class ScalaObject(env: => ScalaEnvironment,
       // TODO: actually dispatch these to the standard library
       environment.lookup(symbol)
     else
-      environment.lookup(
-        symbol.runtimeImplementingSymbol(runtimeClass))
+      resolveCommon(runtimeClass.linearization, symbol)
 
   def resolveDynamicSuper(symbol: TermSymbol, from: ClassSymbol)
       (using Context): ScalaBox[ScalaTerm] =
-    environment.lookup(
-      symbol.nextSuperSymbol(runtimeClass, from))
+    resolveCommon(runtimeClass.linearization
+        .dropWhile(_ != from)
+        .drop(1),  // drop 'from' too
+      symbol)
 
-  def resolveStaticSuper(symbol: TermSymbol, from: ClassSymbol)
+  def resolveStaticSuper(symbol: TermSymbol, in: ClassSymbol)
       (using Context): ScalaBox[ScalaTerm] =
-    environment.lookup(symbol.runtimeImplementingSymbol(from))
+    environment.lookup(symbol.matchingSymbol(in, runtimeClass).get.asTerm)
 
   def resolveSuperAccessor(name: PrefixedName, from: ClassSymbol)
       (using Context): ScalaBox[ScalaTerm] =
     name.underlying match
-      case ExpandedName(NameTags.EXPANDPREFIX, prefix, name) =>
+      // corresponds to C.super[which].name from an inner class of C
+      case ExpandedName(NameTags.EXPANDPREFIX, name, which) =>
         val superClass = runtimeClass.linearization
-          .find(_.asType.name.asSimpleName == name).get
-        val underlyingSymbol = superClass.appliedRef.member(prefix).asTerm
+          .find(_.asType.name.asSimpleName == which).get
+        val underlyingSymbol = superClass.appliedRef.member(name).asTerm
         resolveStaticSuper(underlyingSymbol, superClass)
       case _ =>
         val underlying = name.underlying match
+          // corresponds to super.name from a trait or abstract class,
+          // since the super will have to be resolved dynamically.
+          // (the rest of the ExpandedName encodes the fully qualified name
+          // of the enclosing definition for reasons I do not know)
           case ExpandedName(_, _, name) => name
+          // corresponds to C.super.name from an inner class of C
           case name @ _ => name
         // TODO: this is probably not the right way to get the underlying symbol
         val underlyingSymbol = runtimeClass.linearization
